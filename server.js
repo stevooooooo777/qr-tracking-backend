@@ -5,7 +5,7 @@ const rateLimit = require('express-rate-limit');
 const { Pool } = require('pg');
 
 const app = express();
-app.set('trust proxy', 1); 
+app.set('trust proxy', 1); // Fix for Railway/cloud proxy
 const PORT = process.env.PORT || 3001;
 
 // Database connection with production configuration
@@ -254,6 +254,51 @@ async function initializeDatabase() {
   } catch (error) {
     console.error('Database initialization failed:', error);
     throw error;
+  }
+}
+
+// ======================================================
+// ENSURE DEMO DATA EXISTS
+// ======================================================
+
+async function ensureDemoData() {
+  try {
+    // Create demo restaurant for testing
+    await pool.query(
+      'INSERT INTO restaurants (restaurant_id, name) VALUES ($1, $2) ON CONFLICT (restaurant_id) DO NOTHING',
+      ['demo', 'Demo Restaurant']
+    );
+    
+    // Create a few more test restaurants
+    await pool.query(
+      'INSERT INTO restaurants (restaurant_id, name) VALUES ($1, $2) ON CONFLICT (restaurant_id) DO NOTHING',
+      ['testrestaurant', 'Test Restaurant']
+    );
+    
+    await pool.query(
+      'INSERT INTO restaurants (restaurant_id, name) VALUES ($1, $2) ON CONFLICT (restaurant_id) DO NOTHING',
+      ['mariositalian', 'Marios Italian Kitchen']
+    );
+    
+    console.log('Demo restaurant data ensured');
+  } catch (error) {
+    console.error('Demo data creation failed:', error);
+  }
+}
+
+// ======================================================
+// UTILITY FUNCTION: ENSURE RESTAURANT EXISTS
+// ======================================================
+
+async function ensureRestaurantExists(restaurantId, restaurantName = null) {
+  try {
+    const name = restaurantName || formatRestaurantName(restaurantId);
+    await pool.query(
+      'INSERT INTO restaurants (restaurant_id, name) VALUES ($1, $2) ON CONFLICT (restaurant_id) DO NOTHING',
+      [restaurantId, name]
+    );
+  } catch (error) {
+    console.error(`Failed to ensure restaurant ${restaurantId} exists:`, error);
   }
 }
 
@@ -638,10 +683,7 @@ app.post('/api/qr/generated', async (req, res) => {
     }
 
     // Ensure restaurant exists
-    await pool.query(
-      'INSERT INTO restaurants (restaurant_id, name) VALUES ($1, $2) ON CONFLICT (restaurant_id) DO UPDATE SET name = $2',
-      [restaurantId, restaurantData?.name || restaurantId]
-    );
+    await ensureRestaurantExists(restaurantId, restaurantData?.name);
 
     // Record QR code
     await pool.query(
@@ -659,7 +701,7 @@ app.post('/api/qr/generated', async (req, res) => {
 });
 
 // ======================================================
-// QR TRACKING ROUTES
+// QR TRACKING ROUTES (FIXED)
 // ======================================================
 
 // Regular QR tracking
@@ -669,6 +711,9 @@ app.get('/qr/:restaurantId/:qrType', async (req, res) => {
     const { dest, ssid, pass } = req.query;
     const userAgent = req.headers['user-agent'];
     const ipAddress = req.ip || req.connection.remoteAddress;
+
+    // ENSURE RESTAURANT EXISTS BEFORE SCAN INSERT
+    await ensureRestaurantExists(restaurantId);
 
     await pool.query(
       'INSERT INTO qr_scans (restaurant_id, qr_type, user_agent, ip_address, destination_url) VALUES ($1, $2, $3, $4, $5)',
@@ -692,6 +737,9 @@ app.get('/qr/:restaurantId/table/:tableNumber/:qrType', async (req, res) => {
     const userAgent = req.headers['user-agent'];
     const ipAddress = req.ip || req.connection.remoteAddress;
     const tableNum = parseInt(tableNumber);
+
+    // ENSURE RESTAURANT EXISTS BEFORE SCAN INSERT
+    await ensureRestaurantExists(restaurantId);
 
     await pool.query(
       'INSERT INTO qr_scans (restaurant_id, qr_type, table_number, user_agent, ip_address, destination_url) VALUES ($1, $2, $3, $4, $5, $6)',
@@ -1161,10 +1209,7 @@ app.post('/api/service/request', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    await pool.query(
-      'INSERT INTO restaurants (restaurant_id, name) VALUES ($1, $1) ON CONFLICT (restaurant_id) DO NOTHING',
-      [restaurantId]
-    );
+    await ensureRestaurantExists(restaurantId);
 
     const alertId = `${restaurantId}_${tableNumber}_request_${Date.now()}`;
     const priority = urgent ? 'urgent' : 'high';
@@ -1217,19 +1262,16 @@ app.patch('/api/service/resolve/:requestId', async (req, res) => {
   }
 });
 
-// Add these authentication endpoints for completeness
+// Authentication endpoints (basic stubs - replace with real auth system)
 app.post('/api/auth/register', async (req, res) => {
-  // User registration logic would go here
   res.json({ success: false, message: 'Registration endpoint not implemented yet' });
 });
 
 app.post('/api/auth/login', async (req, res) => {
-  // User login logic would go here
   res.json({ success: false, message: 'Login endpoint not implemented yet' });
 });
 
 app.post('/api/auth/verify', async (req, res) => {
-  // Token verification logic would go here
   res.json({ success: false, message: 'Verification endpoint not implemented yet' });
 });
 
@@ -1760,6 +1802,7 @@ app.use((req, res) => {
 async function startServer() {
   try {
     await initializeDatabase();
+    await ensureDemoData(); // Ensure demo restaurants exist
     
     const server = app.listen(PORT, '0.0.0.0', () => {
       console.log(`Restaurant Intelligence Server running on port ${PORT}`);
