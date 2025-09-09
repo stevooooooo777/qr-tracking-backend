@@ -1216,6 +1216,22 @@ app.patch('/api/service/resolve/:requestId', async (req, res) => {
   }
 });
 
+// Add these authentication endpoints for completeness
+app.post('/api/auth/register', async (req, res) => {
+  // User registration logic would go here
+  res.json({ success: false, message: 'Registration endpoint not implemented yet' });
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  // User login logic would go here
+  res.json({ success: false, message: 'Login endpoint not implemented yet' });
+});
+
+app.post('/api/auth/verify', async (req, res) => {
+  // Token verification logic would go here
+  res.json({ success: false, message: 'Verification endpoint not implemented yet' });
+});
+
 // ======================================================
 // HELPER FUNCTIONS
 // ======================================================
@@ -1277,6 +1293,10 @@ function handleQRResponse(res, restaurantId, qrType, options) {
       res.send(createWiFiPage(restaurantId, ssid, pass, tableNumber));
       break;
 
+    case 'service':
+      res.send(createServiceRequestPage(restaurantId, tableNumber));
+      break;
+
     case 'review':
       if (dest) {
         res.redirect(dest);
@@ -1312,6 +1332,324 @@ function handleQRFallback(res, dest) {
   } else {
     res.status(500).send('Tracking error occurred');
   }
+}
+
+function createServiceRequestPage(restaurantId, tableNumber) {
+  const restaurantName = formatRestaurantName(restaurantId);
+  
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Service Request - Table ${tableNumber}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: white;
+        }
+
+        .container {
+            max-width: 400px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            padding: 30px;
+            backdrop-filter: blur(15px);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            text-align: center;
+        }
+
+        .restaurant-header {
+            margin-bottom: 30px;
+        }
+
+        .restaurant-name {
+            font-size: 1.5em;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .table-info {
+            background: rgba(251, 191, 36, 0.2);
+            border: 2px solid #fbbf24;
+            padding: 15px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+        }
+
+        .table-number {
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #fbbf24;
+            margin-bottom: 5px;
+        }
+
+        .table-label {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .service-title {
+            font-size: 1.3em;
+            margin-bottom: 25px;
+            opacity: 0.95;
+        }
+
+        .service-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .service-btn {
+            padding: 20px;
+            border: none;
+            border-radius: 15px;
+            font-size: 1.1em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            text-decoration: none;
+            color: white;
+            min-height: 70px;
+        }
+
+        .service-btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .btn-ready {
+            background: linear-gradient(135deg, #22c55e, #16a34a);
+        }
+
+        .btn-help {
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+        }
+
+        .btn-bill {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+        }
+
+        .btn-urgent {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            animation: urgentPulse 2s infinite;
+        }
+
+        @keyframes urgentPulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.02); }
+        }
+
+        .status-message {
+            display: none;
+            background: rgba(34, 197, 94, 0.2);
+            border: 2px solid #22c55e;
+            padding: 20px;
+            border-radius: 12px;
+            margin-top: 20px;
+        }
+
+        .status-message.show {
+            display: block;
+            animation: slideIn 0.5s ease;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .processing {
+            opacity: 0.7;
+            pointer-events: none;
+        }
+
+        .footer-info {
+            margin-top: 25px;
+            font-size: 0.9em;
+            opacity: 0.8;
+            line-height: 1.4;
+        }
+
+        .spinner {
+            display: none;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #ffffff40;
+            border-top: 2px solid #ffffff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .back-link {
+            margin-top: 20px;
+        }
+
+        .back-link a {
+            color: rgba(255, 255, 255, 0.8);
+            text-decoration: none;
+            font-size: 0.9em;
+        }
+
+        .back-link a:hover {
+            color: white;
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="restaurant-header">
+            <div class="restaurant-name">${restaurantName}</div>
+        </div>
+
+        <div class="table-info">
+            <div class="table-number">${tableNumber}</div>
+            <div class="table-label">Table Number</div>
+        </div>
+
+        <div class="service-title">How can we help you?</div>
+
+        <div class="service-buttons" id="service-buttons">
+            <button class="service-btn btn-ready" onclick="requestService('ready_to_order')">
+                <span>🍽️</span>
+                <span>Ready to Order</span>
+                <div class="spinner"></div>
+            </button>
+
+            <button class="service-btn btn-help" onclick="requestService('need_help')">
+                <span>🙋</span>
+                <span>Need Assistance</span>
+                <div class="spinner"></div>
+            </button>
+
+            <button class="service-btn btn-bill" onclick="requestService('request_bill')">
+                <span>💳</span>
+                <span>Request Bill</span>
+                <div class="spinner"></div>
+            </button>
+
+            <button class="service-btn btn-urgent" onclick="requestService('urgent_help', true)">
+                <span>🚨</span>
+                <span>Urgent Help</span>
+                <div class="spinner"></div>
+            </button>
+        </div>
+
+        <div class="status-message" id="status-message">
+            <h3>Request Sent!</h3>
+            <p>A member of our team will be with you shortly.</p>
+        </div>
+
+        <div class="footer-info">
+            Staff will be notified immediately via our live dashboard system.
+        </div>
+
+        <div class="back-link">
+            <a href="javascript:history.back()">← Back to menu</a>
+        </div>
+    </div>
+
+    <script>
+        const restaurantId = '${restaurantId}';
+        const tableNumber = ${tableNumber};
+
+        async function requestService(serviceType, urgent = false) {
+            const button = event.target.closest('.service-btn');
+            const buttonsContainer = document.getElementById('service-buttons');
+            const statusMessage = document.getElementById('status-message');
+            const spinner = button.querySelector('.spinner');
+
+            // Show loading state
+            buttonsContainer.classList.add('processing');
+            spinner.style.display = 'inline-block';
+
+            try {
+                const response = await fetch('/api/service/request', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        restaurantId: restaurantId,
+                        tableNumber: tableNumber,
+                        serviceType: serviceType,
+                        urgent: urgent,
+                        timestamp: new Date().toISOString()
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    // Show success message
+                    statusMessage.classList.add('show');
+                    buttonsContainer.style.display = 'none';
+
+                    // Update success message based on service type
+                    const messages = {
+                        ready_to_order: 'A server will take your order shortly!',
+                        need_help: 'Someone will assist you right away!',
+                        request_bill: 'Your bill will be prepared and brought to you!',
+                        urgent_help: 'Manager has been notified and will be right over!'
+                    };
+
+                    statusMessage.innerHTML = \`
+                        <h3>Request Sent!</h3>
+                        <p>\${messages[serviceType] || 'A member of our team will be with you shortly.'}</p>
+                        <div style="margin-top: 15px; font-size: 0.9em; opacity: 0.8;">
+                            Reference: \${data.alertId?.slice(-8) || 'N/A'}
+                        </div>
+                    \`;
+
+                    // Optional: Vibrate phone if supported
+                    if (navigator.vibrate) {
+                        navigator.vibrate(urgent ? [200, 100, 200] : [200]);
+                    }
+
+                    console.log(\`Service request sent: \${serviceType} for Table \${tableNumber}\`);
+
+                } else {
+                    throw new Error(data.error || 'Failed to send request');
+                }
+
+            } catch (error) {
+                console.error('Service request failed:', error);
+                
+                // Show error message
+                alert('Sorry, we could not send your request. Please ask a staff member directly or try again.');
+                
+                // Reset UI
+                buttonsContainer.classList.remove('processing');
+                spinner.style.display = 'none';
+            }
+        }
+
+        console.log(\`Service request page loaded for ${restaurantName} - Table \${tableNumber}\`);
+    </script>
+</body>
+</html>`;
 }
 
 function createMenuPage(restaurantId, tableNumber) {
@@ -1428,9 +1766,11 @@ async function startServer() {
       console.log(`Analytics API: /api/analytics/[restaurantId]`);
       console.log(`QR Tracking: /qr/[restaurantId]/[qrType]`);
       console.log(`TABLE INTELLIGENCE: /qr/[restaurantId]/table/[number]/[qrType]`);
+      console.log(`SERVICE REQUEST: /qr/[restaurantId]/table/[number]/service`);
       console.log(`Live Dashboard: /api/tables/[restaurantId]/live`);
+      console.log(`SERVICE API: /api/service/request`);
       console.log(`PREDICTIVE ANALYTICS: /api/predictions/[restaurantId]`);
-      console.log(`Production-ready with PostgreSQL + Predictive Intelligence`);
+      console.log(`Production-ready with PostgreSQL + Predictive Intelligence + Service Calls`);
     });
 
     // Graceful shutdown
