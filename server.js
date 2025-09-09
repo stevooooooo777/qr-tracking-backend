@@ -5,6 +5,7 @@ const rateLimit = require('express-rate-limit');
 const { Pool } = require('pg');
 
 const app = express();
+app.set('trust proxy', 1); // Add this line for Railway/cloud deployments
 const PORT = process.env.PORT || 3001;
 
 // Database connection with production configuration
