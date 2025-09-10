@@ -3,6 +3,8 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const { Pool } = require('pg');
+const webpush = require('web-push');
+const twilio = require('twilio');
 
 const app = express();
 app.set('trust proxy', 1); // Fix for Railway/cloud proxy
@@ -47,6 +49,26 @@ const limiter = rateLimit({
   legacyHeaders: false,
 });
 app.use(limiter);
+
+// ======================================================
+// PUSH NOTIFICATION SETUP
+// ======================================================
+
+const vapidKeys = {
+  publicKey: process.env.VAPID_PUBLIC_KEY || 'YOUR_VAPID_PUBLIC_KEY',
+  privateKey: process.env.VAPID_PRIVATE_KEY || 'YOUR_VAPID_PRIVATE_KEY'
+};
+
+webpush.setVapidDetails(
+  'mailto:your-email@restaurant.com',
+  vapidKeys.publicKey,
+  vapidKeys.privateKey
+);
+
+const smsClient = process.env.TWILIO_SID ? twilio(
+  process.env.TWILIO_SID,
+  process.env.TWILIO_AUTH_TOKEN
+) : null;
 
 // Health check endpoint (required for Railway)
 app.get('/health', (req, res) => {
@@ -251,8 +273,65 @@ async function initializeDatabase() {
     `);
 
     console.log('Database tables initialized successfully with predictive analytics');
+    
+    // Create notification tables
+    await createNotificationTables();
+    
   } catch (error) {
     console.error('Database initialization failed:', error);
+    throw error;
+  }
+}
+
+// ======================================================
+// NOTIFICATION TABLES CREATION
+// ======================================================
+
+async function createNotificationTables() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id SERIAL PRIMARY KEY,
+        restaurant_id VARCHAR(100) NOT NULL,
+        staff_type VARCHAR(50) NOT NULL,
+        staff_name VARCHAR(100),
+        phone_number VARCHAR(20),
+        subscription_data JSONB NOT NULL,
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (restaurant_id) REFERENCES restaurants(restaurant_id) ON DELETE CASCADE
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS notification_log (
+        id SERIAL PRIMARY KEY,
+        alert_id VARCHAR(100) NOT NULL,
+        restaurant_id VARCHAR(100) NOT NULL,
+        table_number INTEGER,
+        notification_type VARCHAR(50),
+        status VARCHAR(50) DEFAULT 'sent',
+        sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        delivered_at TIMESTAMP,
+        staff_notified JSONB,
+        FOREIGN KEY (restaurant_id) REFERENCES restaurants(restaurant_id) ON DELETE CASCADE
+      )
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_push_subscriptions_restaurant 
+      ON push_subscriptions(restaurant_id, is_active)
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_notification_log_alert 
+      ON notification_log(alert_id)
+    `);
+
+    console.log('Notification tables created successfully');
+  } catch (error) {
+    console.error('Error creating notification tables:', error);
     throw error;
   }
 }
@@ -299,6 +378,100 @@ async function ensureRestaurantExists(restaurantId, restaurantName = null) {
     );
   } catch (error) {
     console.error(`Failed to ensure restaurant ${restaurantId} exists:`, error);
+  }
+}
+
+// ======================================================
+// PUSH NOTIFICATION FUNCTIONS
+// ======================================================
+
+async function sendNotificationToStaff(restaurantId, notificationData, targetStaffType = null) {
+  try {
+    const staffQuery = targetStaffType ? 
+      `SELECT * FROM push_subscriptions 
+       WHERE restaurant_id = $1 AND is_active = true AND staff_type = $2` :
+      `SELECT * FROM push_subscriptions 
+       WHERE restaurant_id = $1 AND is_active = true`;
+    
+    const params = targetStaffType ? [restaurantId, targetStaffType] : [restaurantId];
+    const subscriptions = await pool.query(staffQuery, params);
+
+    if (subscriptions.rows.length === 0) {
+      console.log(`No active subscriptions found for ${restaurantId}`);
+      return { sent: 0, failed: 0 };
+    }
+
+    let sent = 0, failed = 0;
+    const staffNotified = [];
+
+    for (const sub of subscriptions.rows) {
+      const subscription = sub.subscription_data;
+      const payload = JSON.stringify({
+        title: notificationData.title,
+        body: notificationData.body,
+        tableNumber: notificationData.tableNumber,
+        alertId: notificationData.alertId,
+        type: notificationData.type,
+        tag: `table-${notificationData.tableNumber}`,
+        url: '/table-control-center.html?mobile=true'
+      });
+
+      try {
+        await webpush.sendNotification(subscription, payload);
+        sent++;
+        staffNotified.push({
+          id: sub.id,
+          name: sub.staff_name,
+          type: sub.staff_type,
+          method: 'push'
+        });
+        console.log(`✅ Push sent to ${sub.staff_name} (${sub.staff_type})`);
+      } catch (error) {
+        failed++;
+        console.error(`❌ Push failed to ${sub.staff_name}:`, error.message);
+        
+        // SMS backup if available
+        if (sub.phone_number && smsClient) {
+          try {
+            await smsClient.messages.create({
+              body: `🔔 ${notificationData.title}\n${notificationData.body}\n\nReply DONE when resolved.`,
+              from: process.env.TWILIO_PHONE_NUMBER,
+              to: sub.phone_number
+            });
+            staffNotified.push({
+              id: sub.id,
+              name: sub.staff_name,
+              type: sub.staff_type,
+              method: 'sms_backup'
+            });
+            console.log(`✅ SMS backup sent to ${sub.staff_name}`);
+          } catch (smsError) {
+            console.error(`❌ SMS backup failed:`, smsError.message);
+          }
+        }
+      }
+    }
+
+    // Log notification attempt
+    await pool.query(
+      `INSERT INTO notification_log 
+       (alert_id, restaurant_id, table_number, notification_type, status, staff_notified) 
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        notificationData.alertId,
+        restaurantId,
+        notificationData.tableNumber,
+        'push',
+        sent > 0 ? 'sent' : 'failed',
+        JSON.stringify(staffNotified)
+      ]
+    );
+
+    return { sent, failed, staffNotified };
+
+  } catch (error) {
+    console.error('Error sending notifications:', error);
+    return { sent: 0, failed: 1, error: error.message };
   }
 }
 
@@ -651,11 +824,16 @@ app.get('/api/status', async (req, res) => {
         'QR Tracking',
         'Table Intelligence', 
         'Service Alerts',
-        'Predictive Analytics'
+        'Predictive Analytics',
+        'Push Notifications'
       ],
       predictive_analytics: {
         active_restaurants: predictiveEngine.activeRestaurants.size,
         status: 'operational'
+      },
+      notifications: {
+        vapid_configured: !!vapidKeys.publicKey && vapidKeys.publicKey !== 'YOUR_VAPID_PUBLIC_KEY',
+        sms_configured: !!smsClient
       }
     });
   } catch (error) {
@@ -667,6 +845,129 @@ app.get('/api/status', async (req, res) => {
       database: 'disconnected',
       error: error.message
     });
+  }
+});
+
+// ======================================================
+// NOTIFICATION API ROUTES
+// ======================================================
+
+// Get VAPID public key for client
+app.get('/api/notifications/vapid-public-key', (req, res) => {
+  res.json({
+    publicKey: vapidKeys.publicKey
+  });
+});
+
+// Register push subscription
+app.post('/api/notifications/subscribe', async (req, res) => {
+  try {
+    const { subscription, restaurantId, staffType, staffName, phoneNumber } = req.body;
+    
+    if (!subscription || !restaurantId) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO push_subscriptions 
+       (restaurant_id, staff_type, staff_name, phone_number, subscription_data) 
+       VALUES ($1, $2, $3, $4, $5) 
+       ON CONFLICT (restaurant_id, subscription_data) 
+       DO UPDATE SET 
+         staff_type = $2, 
+         staff_name = $3, 
+         phone_number = $4,
+         is_active = true, 
+         last_used = CURRENT_TIMESTAMP
+       RETURNING id`,
+      [restaurantId, staffType, staffName, phoneNumber, JSON.stringify(subscription)]
+    );
+
+    console.log(`✅ Push subscription registered: ${staffName} (${staffType})`);
+    
+    res.json({
+      success: true,
+      subscriptionId: result.rows[0].id,
+      message: 'Push notifications enabled'
+    });
+
+  } catch (error) {
+    console.error('Error registering push subscription:', error);
+    res.status(500).json({ error: 'Failed to register subscription' });
+  }
+});
+
+// Unregister push subscription
+app.post('/api/notifications/unsubscribe', async (req, res) => {
+  try {
+    const { subscriptionEndpoint, restaurantId } = req.body;
+    
+    await pool.query(
+      `UPDATE push_subscriptions 
+       SET is_active = false 
+       WHERE restaurant_id = $1 
+       AND subscription_data->>'endpoint' = $2`,
+      [restaurantId, subscriptionEndpoint]
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error unregistering subscription:', error);
+    res.status(500).json({ error: 'Failed to unregister subscription' });
+  }
+});
+
+// Notification delivery confirmation
+app.post('/api/notifications/delivered', async (req, res) => {
+  try {
+    const { alertId } = req.body;
+    
+    await pool.query(
+      `UPDATE notification_log 
+       SET status = 'delivered', delivered_at = CURRENT_TIMESTAMP 
+       WHERE alert_id = $1`,
+      [alertId]
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error confirming delivery:', error);
+    res.status(500).json({ error: 'Failed to confirm delivery' });
+  }
+});
+
+// Get notification stats for dashboard
+app.get('/api/notifications/stats/:restaurantId', async (req, res) => {
+  try {
+    const { restaurantId } = req.params;
+    
+    const stats = await pool.query(
+      `SELECT 
+         COUNT(*) as total_sent,
+         COUNT(CASE WHEN status = 'delivered' THEN 1 END) as delivered,
+         COUNT(CASE WHEN notification_type = 'push' THEN 1 END) as push_notifications,
+         COUNT(CASE WHEN staff_notified::text LIKE '%sms_backup%' THEN 1 END) as sms_backups
+       FROM notification_log 
+       WHERE restaurant_id = $1 
+       AND sent_at > NOW() - INTERVAL '24 hours'`,
+      [restaurantId]
+    );
+
+    const activeSubscriptions = await pool.query(
+      `SELECT COUNT(*) as active_staff, staff_type 
+       FROM push_subscriptions 
+       WHERE restaurant_id = $1 AND is_active = true 
+       GROUP BY staff_type`,
+      [restaurantId]
+    );
+
+    res.json({
+      last24Hours: stats.rows[0],
+      activeSubscriptions: activeSubscriptions.rows
+    });
+  } catch (error) {
+    console.error('Error fetching notification stats:', error);
+    res.status(500).json({ error: 'Failed to fetch stats' });
   }
 });
 
@@ -1060,6 +1361,17 @@ async function generateTableServiceAlerts(restaurantId, tableNumber) {
         INSERT INTO service_alerts (alert_id, restaurant_id, table_number, alert_type, message, action_required, priority, source)
         VALUES ($1, $2, $3, $4, $5, $6, $7, 'behavioral')
       `, [alertId, restaurantId, tableNumber, alert.type, alert.message, alert.action, alert.priority]);
+
+      // Send notification for urgent behavioral alerts
+      if (alert.priority === 'urgent') {
+        await sendNotificationToStaff(restaurantId, {
+          title: `📋 Table ${tableNumber} Ready to Order`,
+          body: `${menuScansRecent} menu scans in 5 minutes - Customer likely ready to order`,
+          tableNumber,
+          alertId,
+          type: 'behavioral_alert'
+        }, 'server');
+      }
     }
 
     if (alerts.length > 0) {
@@ -1198,7 +1510,7 @@ async function cleanupOldSessions(restaurantId) {
 }
 
 // ======================================================
-// SERVICE REQUEST HANDLING
+// SERVICE REQUEST HANDLING WITH NOTIFICATIONS
 // ======================================================
 
 app.post('/api/service/request', async (req, res) => {
@@ -1218,12 +1530,26 @@ app.post('/api/service/request', async (req, res) => {
 
     await pool.query(`
       INSERT INTO service_alerts (alert_id, restaurant_id, table_number, alert_type, service_type, message, action_required, priority, source)
-      VALUES ($1, $2, $3, 'customer_request', $4, $5, $6, $7, 'customer_direct')
+      VALUES ($1, $2, $3, 'customer_request', $4, $5, $6, $7, 'customer_request')
     `, [alertId, restaurantId, tableNumber, serviceType, message, action, priority]);
 
-    console.log(`SERVICE REQUEST: Table ${tableNumber} - ${serviceType} ${urgent ? '(URGENT)' : ''}`);
+    // Send push notifications to staff
+    const notificationResult = await sendNotificationToStaff(restaurantId, {
+      title: `🔔 Table ${tableNumber} Service Request`,
+      body: `${serviceType.replace('_', ' ').toUpperCase()} requested - Customer needs immediate assistance`,
+      tableNumber,
+      alertId,
+      type: 'customer_request'
+    }, 'server');
 
-    res.json({ success: true, message: 'Service request recorded', alertId });
+    console.log(`SERVICE REQUEST: Table ${tableNumber} - ${serviceType} - ${notificationResult.sent} staff notified`);
+
+    res.json({ 
+      success: true, 
+      message: 'Service request recorded and staff notified', 
+      alertId,
+      notificationsSent: notificationResult.sent
+    });
 
   } catch (error) {
     console.error('Service request error:', error);
@@ -1662,7 +1988,7 @@ function createServiceRequestPage(restaurantId, tableNumber) {
                         <h3>Request Sent!</h3>
                         <p>\${messages[serviceType] || 'A member of our team will be with you shortly.'}</p>
                         <div style="margin-top: 15px; font-size: 0.9em; opacity: 0.8;">
-                            Reference: \${data.alertId?.slice(-8) || 'N/A'}
+                            \${data.notificationsSent ? \`✅ \${data.notificationsSent} staff member(s) notified\` : 'Staff notified'}
                         </div>
                     \`;
 
@@ -1805,7 +2131,7 @@ async function startServer() {
     await ensureDemoData(); // Ensure demo restaurants exist
     
     const server = app.listen(PORT, '0.0.0.0', () => {
-      console.log(`Restaurant Intelligence Server running on port ${PORT}`);
+      console.log(`🚀 Restaurant Intelligence Server running on port ${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log(`Analytics API: /api/analytics/[restaurantId]`);
       console.log(`QR Tracking: /qr/[restaurantId]/[qrType]`);
@@ -1814,7 +2140,8 @@ async function startServer() {
       console.log(`Live Dashboard: /api/tables/[restaurantId]/live`);
       console.log(`SERVICE API: /api/service/request`);
       console.log(`PREDICTIVE ANALYTICS: /api/predictions/[restaurantId]`);
-      console.log(`Production-ready with PostgreSQL + Predictive Intelligence + Service Calls`);
+      console.log(`🔔 PUSH NOTIFICATIONS: /api/notifications/*`);
+      console.log(`Production-ready with PostgreSQL + Predictive Intelligence + Service Calls + Push Notifications`);
     });
 
     // Graceful shutdown
