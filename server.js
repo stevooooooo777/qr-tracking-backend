@@ -272,6 +272,26 @@ async function initializeDatabase() {
       ON live_predictions(restaurant_id, prediction_type, created_at DESC)
     `);
 
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        full_name VARCHAR(255) NOT NULL,
+        company_name VARCHAR(255) NOT NULL,
+        restaurant_id VARCHAR(100) NOT NULL,
+        plan VARCHAR(50) DEFAULT 'professional',
+        created_at TIMESTAMP DEFAULT NOW(),
+        last_login TIMESTAMP,
+        is_active BOOLEAN DEFAULT true,
+        FOREIGN KEY (restaurant_id) REFERENCES restaurants(restaurant_id) ON DELETE CASCADE
+      )
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)
+    `);
     console.log('Database tables initialized successfully with predictive analytics');
     
     // Create notification tables
@@ -1588,18 +1608,228 @@ app.patch('/api/service/resolve/:requestId', async (req, res) => {
   }
 });
 
-// Authentication endpoints (basic stubs - replace with real auth system)
+// Authentication endpoints 
+// Real Authentication System with PostgreSQL
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+
+// JWT secret
+const JWT_SECRET = process.env.JWT_SECRET || 'temp-secret-change-in-railway';
+
+// Helper functions
+function generateToken(user) {
+  return jwt.sign(
+    { 
+      id: user.id,
+      email: user.email,
+      restaurantId: user.restaurant_id,
+      companyName: user.company_name
+    },
+    JWT_SECRET,
+    { expiresIn: '7d' }
+  );
+}
+
+function verifyToken(token) {
+  try {
+    return jwt.verify(token, JWT_SECRET);
+  } catch (error) {
+    return null;
+  }
+}
+
+// User Registration
 app.post('/api/auth/register', async (req, res) => {
-  res.json({ success: false, message: 'Registration endpoint not implemented yet' });
+  try {
+    const { companyName, restaurantId, fullName, email, password } = req.body;
+
+    if (!companyName || !restaurantId || !fullName || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'All fields are required'
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 6 characters long'
+      });
+    }
+
+    // Check if email already exists
+    const existingUser = await pool.query(
+      'SELECT id FROM users WHERE email = $1',
+      [email.toLowerCase()]
+    );
+
+    if (existingUser.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'An account with this email already exists'
+      });
+    }
+
+    // Ensure restaurant exists
+    await ensureRestaurantExists(restaurantId, companyName);
+
+    // Hash password
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    // Create user
+    const userResult = await pool.query(`
+      INSERT INTO users (email, password_hash, full_name, company_name, restaurant_id)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING id, email, full_name, company_name, restaurant_id, created_at
+    `, [email.toLowerCase(), passwordHash, fullName, companyName, restaurantId]);
+
+    const user = userResult.rows[0];
+    const token = generateToken(user);
+
+    res.status(201).json({
+      success: true,
+      message: 'Account created successfully',
+      token: token,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.full_name,
+        companyName: user.company_name,
+        restaurantId: user.restaurant_id
+      }
+    });
+
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Registration failed. Please try again.'
+    });
+  }
 });
 
+// User Login
 app.post('/api/auth/login', async (req, res) => {
-  res.json({ success: false, message: 'Login endpoint not implemented yet' });
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email and password are required'
+      });
+    }
+
+    // Find user
+    const userResult = await pool.query(`
+      SELECT id, email, password_hash, full_name, company_name, restaurant_id
+      FROM users 
+      WHERE email = $1
+    `, [email.toLowerCase()]);
+
+    if (userResult.rows.length === 0) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid email or password'
+      });
+    }
+
+    const user = userResult.rows[0];
+
+    // Verify password
+    const passwordValid = await bcrypt.compare(password, user.password_hash);
+    
+    if (!passwordValid) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid email or password'
+      });
+    }
+
+    const token = generateToken(user);
+
+    res.json({
+      success: true,
+      message: 'Login successful',
+      token: token,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.full_name,
+        companyName: user.company_name,
+        restaurantId: user.restaurant_id
+      }
+    });
+
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Login failed. Please try again.'
+    });
+  }
 });
 
+// Token Verification
 app.post('/api/auth/verify', async (req, res) => {
-  res.json({ success: false, message: 'Verification endpoint not implemented yet' });
+  try {
+    const { token } = req.body;
+
+    if (!token) {
+      return res.status(400).json({
+        success: false,
+        message: 'Token is required'
+      });
+    }
+
+    const decoded = verifyToken(token);
+    
+    if (!decoded) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid or expired token'
+      });
+    }
+
+    // Get fresh user data
+    const userResult = await pool.query(`
+      SELECT id, email, full_name, company_name, restaurant_id
+      FROM users 
+      WHERE id = $1
+    `, [decoded.id]);
+
+    if (userResult.rows.length === 0) {
+      return res.status(401).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    const user = userResult.rows[0];
+
+    res.json({
+      success: true,
+      message: 'Token is valid',
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.full_name,
+        companyName: user.company_name,
+        restaurantId: user.restaurant_id
+      }
+    });
+
+  } catch (error) {
+    console.error('Token verification error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Token verification failed'
+    });
+  }
 });
+
+
+
 
 // ======================================================
 // HELPER FUNCTIONS
