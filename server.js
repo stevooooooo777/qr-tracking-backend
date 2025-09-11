@@ -1616,6 +1616,7 @@ const jwt = require('jsonwebtoken');
 // JWT secret
 const JWT_SECRET = process.env.JWT_SECRET || 'temp-secret-change-in-railway';
 
+
 // Helper functions
 function generateToken(user) {
   return jwt.sign(
@@ -1827,6 +1828,7 @@ app.post('/api/auth/verify', async (req, res) => {
     });
   }
 });
+
 
 
 
@@ -2342,14 +2344,6 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Handle 404s
-app.use((req, res) => {
-  res.status(404).json({
-    error: 'Endpoint not found',
-    path: req.path,
-    method: req.method
-  });
-});
 
 // ======================================================
 // SERVER STARTUP WITH PREDICTIVE ANALYTICS
@@ -2391,5 +2385,14 @@ async function startServer() {
 }
 
 startServer();
+
+// Handle 404s
+app.use((req, res) => {
+  res.status(404).json({
+    error: 'Endpoint not found',
+    path: req.path,
+    method: req.method
+  });
+});
 
 module.exports = app;
