@@ -29,8 +29,8 @@ app.use(helmet({
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' 
     ? [
-        process.env.FRONTEND_URL || 'https://your-netlify-domain.netlify.app',
-        process.env.DASHBOARD_URL || 'https://your-netlify-domain.netlify.app'
+        'https://insane.marketing',
+        'https://www.insane.marketing'
       ]
     : ['http://localhost:3000', 'http://localhost:8080', 'http://127.0.0.1:5500'],
   credentials: true,
