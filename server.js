@@ -391,13 +391,26 @@ async function ensureDemoData() {
 
 async function ensureRestaurantExists(restaurantId, restaurantName = null) {
   try {
+    // Validate restaurant ID first
+    if (!restaurantId || typeof restaurantId !== 'string') {
+      throw new Error('Invalid restaurant ID provided');
+    }
+
     const name = restaurantName || formatRestaurantName(restaurantId);
-    await pool.query(
-      'INSERT INTO restaurants (restaurant_id, name) VALUES ($1, $2) ON CONFLICT (restaurant_id) DO NOTHING',
+    
+    console.log(`Ensuring restaurant exists: ${restaurantId} with name: ${name}`);
+
+    const result = await pool.query(
+      'INSERT INTO restaurants (restaurant_id, name) VALUES ($1, $2) ON CONFLICT (restaurant_id) DO UPDATE SET name = $2 RETURNING *',
       [restaurantId, name]
     );
+
+    console.log(`Restaurant entry confirmed: ${result.rows[0].restaurant_id}`);
+    return result.rows[0];
+
   } catch (error) {
     console.error(`Failed to ensure restaurant ${restaurantId} exists:`, error);
+    throw error; // Re-throw to make registration fail if restaurant creation fails
   }
 }
 
