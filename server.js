@@ -29,15 +29,6 @@ pool.on('error', (err) => {
 // Initialize database tables
 async function initializeDatabase() {
     try {
-        // RESET DATABASE TABLES - Remove after first successful deployment
-        console.log('[DATABASE] Resetting tables for new PostgreSQL schema...');
-        await pool.query('DROP TABLE IF EXISTS table_alerts CASCADE');
-        await pool.query('DROP TABLE IF EXISTS table_status CASCADE');
-        await pool.query('DROP TABLE IF EXISTS qr_scans CASCADE');
-        await pool.query('DROP TABLE IF EXISTS users CASCADE');
-        await pool.query('DROP TABLE IF EXISTS restaurants CASCADE');
-        console.log('[DATABASE] Old tables dropped, creating new schema...');
-
         // Create restaurants table
         await pool.query(`
             CREATE TABLE IF NOT EXISTS restaurants (
