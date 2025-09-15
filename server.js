@@ -68,10 +68,14 @@ db.serialize(() => {
 
 // Middleware
 app.use(cors({
-    origin: ['http://localhost:3000', 'https://sme.insane.marketing', 'https://qr.insane.marketing'],
+    origin: [
+        'http://localhost:3000', 
+        'https://sme.insane.marketing', 
+        'https://qr.insane.marketing',
+        'https://insane.marketing'  // ADD THIS LINE
+    ],
     credentials: true
 }));
-
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
