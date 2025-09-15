@@ -1,70 +1,123 @@
 const express = require('express');
 const cors = require('cors');
-const path = require('path');
-const fs = require('fs').promises;
-const sqlite3 = require('sqlite3').verbose();
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Database setup
-const db = new sqlite3.Database('qr_analytics.db');
+// PostgreSQL connection
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+});
+
+// JWT Configuration
+const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-change-in-production';
+
+// Test database connection
+pool.on('connect', () => {
+    console.log('[DATABASE] Connected to PostgreSQL database');
+});
+
+pool.on('error', (err) => {
+    console.error('[DATABASE] PostgreSQL connection error:', err);
+});
 
 // Initialize database tables
-db.serialize(() => {
-    // Restaurants table
-    db.run(`CREATE TABLE IF NOT EXISTS restaurants (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        restaurant_id TEXT UNIQUE NOT NULL,
-        restaurant_name TEXT NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`);
+async function initializeDatabase() {
+    try {
+        // Create restaurants table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS restaurants (
+                id SERIAL PRIMARY KEY,
+                restaurant_id VARCHAR(100) UNIQUE NOT NULL,
+                restaurant_name VARCHAR(255) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
 
-    // QR scans table
-    db.run(`CREATE TABLE IF NOT EXISTS qr_scans (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        restaurant_id TEXT NOT NULL,
-        qr_type TEXT NOT NULL,
-        table_number INTEGER,
-        scan_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-        user_agent TEXT,
-        ip_address TEXT,
-        referrer TEXT,
-        session_duration INTEGER DEFAULT 0,
-        converted BOOLEAN DEFAULT 0,
-        FOREIGN KEY (restaurant_id) REFERENCES restaurants (restaurant_id)
-    )`);
+        // Create users table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                email VARCHAR(255) UNIQUE NOT NULL,
+                password_hash VARCHAR(255) NOT NULL,
+                full_name VARCHAR(255) NOT NULL,
+                restaurant_name VARCHAR(255) NOT NULL,
+                restaurant_id VARCHAR(100) NOT NULL,
+                plan VARCHAR(50) DEFAULT 'professional',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_login TIMESTAMP,
+                is_active BOOLEAN DEFAULT true,
+                FOREIGN KEY (restaurant_id) REFERENCES restaurants (restaurant_id) ON DELETE CASCADE
+            )
+        `);
 
-    // Table alerts table
-    db.run(`CREATE TABLE IF NOT EXISTS table_alerts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        restaurant_id TEXT NOT NULL,
-        table_number INTEGER NOT NULL,
-        alert_type TEXT NOT NULL,
-        message TEXT NOT NULL,
-        priority TEXT DEFAULT 'medium',
-        resolved BOOLEAN DEFAULT 0,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        resolved_at DATETIME,
-        FOREIGN KEY (restaurant_id) REFERENCES restaurants (restaurant_id)
-    )`);
+        // Create QR scans table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS qr_scans (
+                id SERIAL PRIMARY KEY,
+                restaurant_id VARCHAR(100) NOT NULL,
+                qr_type VARCHAR(50) NOT NULL,
+                table_number INTEGER,
+                scan_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                user_agent TEXT,
+                ip_address VARCHAR(45),
+                referrer TEXT,
+                session_duration INTEGER DEFAULT 0,
+                converted BOOLEAN DEFAULT false,
+                FOREIGN KEY (restaurant_id) REFERENCES restaurants (restaurant_id) ON DELETE CASCADE
+            )
+        `);
 
-    // Table status table
-    db.run(`CREATE TABLE IF NOT EXISTS table_status (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        restaurant_id TEXT NOT NULL,
-        table_number INTEGER NOT NULL,
-        status TEXT DEFAULT 'available',
-        party_size INTEGER DEFAULT 0,
-        seated_at DATETIME,
-        last_activity DATETIME DEFAULT CURRENT_TIMESTAMP,
-        estimated_duration INTEGER DEFAULT 60,
-        FOREIGN KEY (restaurant_id) REFERENCES restaurants (restaurant_id),
-        UNIQUE(restaurant_id, table_number)
-    )`);
+        // Create table alerts table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS table_alerts (
+                id SERIAL PRIMARY KEY,
+                restaurant_id VARCHAR(100) NOT NULL,
+                table_number INTEGER NOT NULL,
+                alert_type VARCHAR(50) NOT NULL,
+                message TEXT NOT NULL,
+                priority VARCHAR(20) DEFAULT 'medium',
+                resolved BOOLEAN DEFAULT false,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                resolved_at TIMESTAMP,
+                FOREIGN KEY (restaurant_id) REFERENCES restaurants (restaurant_id) ON DELETE CASCADE
+            )
+        `);
 
-    console.log('[DATABASE] All tables initialized successfully');
-});
+        // Create table status table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS table_status (
+                id SERIAL PRIMARY KEY,
+                restaurant_id VARCHAR(100) NOT NULL,
+                table_number INTEGER NOT NULL,
+                status VARCHAR(20) DEFAULT 'available',
+                party_size INTEGER DEFAULT 0,
+                seated_at TIMESTAMP,
+                last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                estimated_duration INTEGER DEFAULT 60,
+                FOREIGN KEY (restaurant_id) REFERENCES restaurants (restaurant_id) ON DELETE CASCADE,
+                UNIQUE(restaurant_id, table_number)
+            )
+        `);
+
+        // Create indexes for better performance
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_qr_scans_restaurant ON qr_scans(restaurant_id)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_table_alerts_restaurant ON table_alerts(restaurant_id)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_table_status_restaurant ON table_status(restaurant_id)`);
+
+        console.log('[DATABASE] All tables initialized successfully');
+    } catch (error) {
+        console.error('[DATABASE] Error initializing tables:', error);
+    }
+}
+
+// Initialize database on startup
+initializeDatabase();
 
 // Middleware
 app.use(cors({
@@ -72,10 +125,11 @@ app.use(cors({
         'http://localhost:3000', 
         'https://sme.insane.marketing', 
         'https://qr.insane.marketing',
-        'https://insane.marketing'  // ADD THIS LINE
+        'https://insane.marketing'
     ],
     credentials: true
 }));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -85,16 +139,253 @@ app.use((req, res, next) => {
     next();
 });
 
+// Helper functions
+function generateToken(user) {
+    return jwt.sign(
+        { 
+            id: user.id, 
+            email: user.email, 
+            restaurantId: user.restaurant_id 
+        },
+        JWT_SECRET,
+        { expiresIn: '30d' }
+    );
+}
+
+function verifyToken(token) {
+    try {
+        return jwt.verify(token, JWT_SECRET);
+    } catch (error) {
+        return null;
+    }
+}
+
 // Health check endpoint
 app.get('/api/health', (req, res) => {
     res.json({ 
         status: 'healthy', 
         timestamp: new Date().toISOString(),
-        version: '1.0.0'
+        version: '1.0.0',
+        database: 'postgresql'
     });
 });
 
-// QR scan tracking endpoints
+// AUTHENTICATION ENDPOINTS
+
+// Registration endpoint
+app.post('/api/auth/register', async (req, res) => {
+    const { restaurantName, restaurantId, fullName, email, password } = req.body;
+    
+    console.log(`[AUTH] Registration attempt: ${email} for ${restaurantName}`);
+    
+    try {
+        // Validate input
+        if (!email || !password || !restaurantName || !fullName || !restaurantId) {
+            return res.status(400).json({
+                success: false,
+                message: 'All fields are required'
+            });
+        }
+        
+        if (password.length < 6) {
+            return res.status(400).json({
+                success: false,
+                message: 'Password must be at least 6 characters'
+            });
+        }
+        
+        // Check if user already exists
+        const existingUser = await pool.query(
+            'SELECT email FROM users WHERE email = $1',
+            [email]
+        );
+        
+        if (existingUser.rows.length > 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'An account with this email already exists'
+            });
+        }
+        
+        // Hash password
+        const saltRounds = 12;
+        const passwordHash = await bcrypt.hash(password, saltRounds);
+        
+        // Create restaurant first
+        await pool.query(
+            'INSERT INTO restaurants (restaurant_id, restaurant_name) VALUES ($1, $2) ON CONFLICT (restaurant_id) DO NOTHING',
+            [restaurantId, restaurantName]
+        );
+        
+        // Create user
+        const userResult = await pool.query(
+            `INSERT INTO users (email, password_hash, full_name, restaurant_name, restaurant_id) 
+             VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+            [email, passwordHash, fullName, restaurantName, restaurantId]
+        );
+        
+        const userId = userResult.rows[0].id;
+        
+        // Generate token
+        const user = {
+            id: userId,
+            email: email,
+            restaurant_id: restaurantId
+        };
+        
+        const token = generateToken(user);
+        
+        console.log(`[AUTH] User registered successfully: ${email}`);
+        
+        res.status(201).json({
+            success: true,
+            message: 'Account created successfully',
+            token: token,
+            user: {
+                id: userId,
+                email: email,
+                full_name: fullName,
+                restaurant_name: restaurantName,
+                restaurant_id: restaurantId,
+                plan: 'professional'
+            }
+        });
+        
+    } catch (error) {
+        console.error('[AUTH] Registration error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Registration failed. Please try again.'
+        });
+    }
+});
+
+// Login endpoint
+app.post('/api/auth/login', async (req, res) => {
+    const { email, password } = req.body;
+    
+    console.log(`[AUTH] Login attempt: ${email}`);
+    
+    try {
+        // Validate input
+        if (!email || !password) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email and password are required'
+            });
+        }
+        
+        // Find user
+        const userResult = await pool.query(
+            'SELECT * FROM users WHERE email = $1 AND is_active = true',
+            [email]
+        );
+        
+        if (userResult.rows.length === 0) {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid email or password'
+            });
+        }
+        
+        const user = userResult.rows[0];
+        
+        // Verify password
+        const passwordValid = await bcrypt.compare(password, user.password_hash);
+        
+        if (!passwordValid) {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid email or password'
+            });
+        }
+        
+        // Update last login
+        await pool.query(
+            'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
+            [user.id]
+        );
+        
+        // Generate token
+        const token = generateToken(user);
+        
+        console.log(`[AUTH] User logged in successfully: ${email}`);
+        
+        res.json({
+            success: true,
+            message: 'Login successful',
+            token: token,
+            user: {
+                id: user.id,
+                email: user.email,
+                full_name: user.full_name,
+                restaurant_name: user.restaurant_name,
+                restaurant_id: user.restaurant_id,
+                plan: user.plan
+            }
+        });
+        
+    } catch (error) {
+        console.error('[AUTH] Login error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Login failed. Please try again.'
+        });
+    }
+});
+
+// Token verification endpoint
+app.post('/api/auth/verify', (req, res) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+        return res.status(401).json({
+            success: false,
+            message: 'Access token is required'
+        });
+    }
+    
+    const decoded = verifyToken(token);
+    
+    if (!decoded) {
+        return res.status(403).json({
+            success: false,
+            message: 'Invalid or expired token'
+        });
+    }
+    
+    res.json({
+        success: true,
+        user: decoded
+    });
+});
+
+// Forgot password endpoint
+app.post('/api/auth/forgot-password', async (req, res) => {
+    const { email } = req.body;
+    
+    console.log(`[AUTH] Password reset requested for: ${email}`);
+    
+    try {
+        // In production, implement actual password reset
+        res.json({
+            success: true,
+            message: 'If an account with that email exists, a reset link has been sent.'
+        });
+        
+    } catch (error) {
+        console.error('[AUTH] Password reset error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Password reset request failed. Please try again.'
+        });
+    }
+});
+
+// QR TRACKING ENDPOINTS
+
+// QR scan tracking
 app.get('/qr/:restaurantId/:qrType', async (req, res) => {
     const { restaurantId, qrType } = req.params;
     const { table, redirect } = req.query;
@@ -129,62 +420,54 @@ app.get('/qr/:restaurantId/:qrType', async (req, res) => {
     }
 });
 
-// Record QR scan
+// Record QR scan function
 async function recordQRScan(scanData) {
-    return new Promise((resolve, reject) => {
-        const { restaurantId, qrType, tableNumber, userAgent, ipAddress, referrer } = scanData;
-        
-        // First ensure restaurant exists
-        db.run(
-            `INSERT OR IGNORE INTO restaurants (restaurant_id, restaurant_name) VALUES (?, ?)`,
-            [restaurantId, restaurantId.charAt(0).toUpperCase() + restaurantId.slice(1)],
-            function(err) {
-                if (err) {
-                    console.error('[DB] Error creating restaurant:', err);
-                }
-            }
+    const { restaurantId, qrType, tableNumber, userAgent, ipAddress, referrer } = scanData;
+    
+    try {
+        // Ensure restaurant exists
+        await pool.query(
+            'INSERT INTO restaurants (restaurant_id, restaurant_name) VALUES ($1, $2) ON CONFLICT (restaurant_id) DO NOTHING',
+            [restaurantId, restaurantId.charAt(0).toUpperCase() + restaurantId.slice(1)]
         );
         
         // Record the scan
-        db.run(
+        const result = await pool.query(
             `INSERT INTO qr_scans (restaurant_id, qr_type, table_number, user_agent, ip_address, referrer) 
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [restaurantId, qrType, tableNumber, userAgent, ipAddress, referrer],
-            function(err) {
-                if (err) {
-                    console.error('[DB] Error recording scan:', err);
-                    reject(err);
-                } else {
-                    console.log(`[DB] Scan recorded - ID: ${this.lastID}`);
-                    resolve(this.lastID);
-                }
-            }
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+            [restaurantId, qrType, tableNumber, userAgent, ipAddress, referrer]
         );
-    });
+        
+        console.log(`[DB] Scan recorded - ID: ${result.rows[0].id}`);
+        return result.rows[0].id;
+        
+    } catch (error) {
+        console.error('[DB] Error recording scan:', error);
+        throw error;
+    }
 }
 
-// Update table status
+// Update table status function
 async function updateTableStatus(restaurantId, tableNumber, status) {
-    return new Promise((resolve, reject) => {
-        db.run(
-            `INSERT OR REPLACE INTO table_status 
-             (restaurant_id, table_number, status, last_activity, seated_at) 
-             VALUES (?, ?, ?, CURRENT_TIMESTAMP, CASE WHEN ? = 'occupied' THEN CURRENT_TIMESTAMP ELSE seated_at END)`,
-            [restaurantId, tableNumber, status, status],
-            function(err) {
-                if (err) {
-                    console.error('[DB] Error updating table status:', err);
-                    reject(err);
-                } else {
-                    console.log(`[DB] Table ${tableNumber} status updated to ${status}`);
-                    resolve();
-                }
-            }
+    try {
+        await pool.query(
+            `INSERT INTO table_status (restaurant_id, table_number, status, last_activity, seated_at) 
+             VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CASE WHEN $3 = 'occupied' THEN CURRENT_TIMESTAMP ELSE NULL END)
+             ON CONFLICT (restaurant_id, table_number) 
+             DO UPDATE SET status = $3, last_activity = CURRENT_TIMESTAMP, 
+                          seated_at = CASE WHEN $3 = 'occupied' THEN CURRENT_TIMESTAMP ELSE table_status.seated_at END`,
+            [restaurantId, tableNumber, status]
         );
-    });
+        
+        console.log(`[DB] Table ${tableNumber} status updated to ${status}`);
+        
+    } catch (error) {
+        console.error('[DB] Error updating table status:', error);
+        throw error;
+    }
 }
 
-// Get redirect URL based on QR type
+// Get redirect URL function
 function getRedirectUrl(qrType, customRedirect) {
     if (customRedirect) return customRedirect;
     
@@ -199,169 +482,289 @@ function getRedirectUrl(qrType, customRedirect) {
     return redirectMap[qrType] || 'https://example.com';
 }
 
+// ANALYTICS ENDPOINTS
+
 // Analytics endpoint
-app.get('/api/analytics/:restaurantId', (req, res) => {
+app.get('/api/analytics/:restaurantId', async (req, res) => {
     const { restaurantId } = req.params;
     
     console.log(`[ANALYTICS] Loading data for: ${restaurantId}`);
     
-    // Get basic stats
-    const queries = {
-        totalScans: `SELECT COUNT(*) as count FROM qr_scans WHERE restaurant_id = ?`,
-        todayScans: `SELECT COUNT(*) as count FROM qr_scans WHERE restaurant_id = ? AND DATE(scan_timestamp) = DATE('now')`,
-        weeklyScans: `SELECT COUNT(*) as count FROM qr_scans WHERE restaurant_id = ? AND scan_timestamp >= DATE('now', '-7 days')`,
-        monthlyScans: `SELECT COUNT(*) as count FROM qr_scans WHERE restaurant_id = ? AND scan_timestamp >= DATE('now', '-30 days')`,
-        scansByType: `SELECT qr_type, COUNT(*) as count FROM qr_scans WHERE restaurant_id = ? GROUP BY qr_type`,
-        hourlyData: `SELECT 
-            strftime('%H', scan_timestamp) as hour,
-            COUNT(*) as count 
-            FROM qr_scans 
-            WHERE restaurant_id = ? AND DATE(scan_timestamp) = DATE('now')
-            GROUP BY hour 
-            ORDER BY hour`,
-        recentScans: `SELECT * FROM qr_scans WHERE restaurant_id = ? ORDER BY scan_timestamp DESC LIMIT 20`
-    };
-    
-    const results = {};
-    let completedQueries = 0;
-    const totalQueries = Object.keys(queries).length;
-    
-    // Execute all queries
-    Object.entries(queries).forEach(([key, query]) => {
-        db.all(query, [restaurantId], (err, rows) => {
-            if (err) {
-                console.error(`[ANALYTICS] Error in ${key}:`, err);
-                results[key] = key.includes('Scans') || key === 'conversionRate' ? 0 : [];
-            } else {
-                if (key === 'totalScans' || key === 'todayScans' || key === 'weeklyScans' || key === 'monthlyScans') {
-                    results[key] = rows[0]?.count || 0;
-                } else if (key === 'scansByType') {
-                    results[key] = {};
-                    rows.forEach(row => {
-                        results[key][row.qr_type] = row.count;
-                    });
-                } else {
-                    results[key] = rows || [];
-                }
-            }
-            
-            completedQueries++;
-            
-            if (completedQueries === totalQueries) {
-                // Calculate additional metrics
-                results.conversionRate = results.totalScans > 0 ? ((results.totalScans * 0.15) + Math.random() * 10).toFixed(1) : 0;
-                results.avgSessionTime = results.totalScans > 0 ? Math.floor(120 + Math.random() * 180) : 0;
-                
-                console.log(`[ANALYTICS] Returning data:`, {
-                    totalScans: results.totalScans,
-                    todayScans: results.todayScans,
-                    scanTypes: Object.keys(results.scansByType).length
-                });
-                
-                res.json(results);
-            }
+    try {
+        // Get total scans
+        const totalScansResult = await pool.query(
+            'SELECT COUNT(*) as count FROM qr_scans WHERE restaurant_id = $1',
+            [restaurantId]
+        );
+        
+        // Get today's scans
+        const todayScansResult = await pool.query(
+            "SELECT COUNT(*) as count FROM qr_scans WHERE restaurant_id = $1 AND DATE(scan_timestamp) = CURRENT_DATE",
+            [restaurantId]
+        );
+        
+        // Get weekly scans
+        const weeklyScansResult = await pool.query(
+            "SELECT COUNT(*) as count FROM qr_scans WHERE restaurant_id = $1 AND scan_timestamp >= CURRENT_DATE - INTERVAL '7 days'",
+            [restaurantId]
+        );
+        
+        // Get monthly scans
+        const monthlyScansResult = await pool.query(
+            "SELECT COUNT(*) as count FROM qr_scans WHERE restaurant_id = $1 AND scan_timestamp >= CURRENT_DATE - INTERVAL '30 days'",
+            [restaurantId]
+        );
+        
+        // Get scans by type
+        const scansByTypeResult = await pool.query(
+            'SELECT qr_type, COUNT(*) as count FROM qr_scans WHERE restaurant_id = $1 GROUP BY qr_type',
+            [restaurantId]
+        );
+        
+        // Get hourly data for today
+        const hourlyDataResult = await pool.query(
+            `SELECT EXTRACT(HOUR FROM scan_timestamp) as hour, COUNT(*) as count 
+             FROM qr_scans 
+             WHERE restaurant_id = $1 AND DATE(scan_timestamp) = CURRENT_DATE
+             GROUP BY EXTRACT(HOUR FROM scan_timestamp) 
+             ORDER BY hour`,
+            [restaurantId]
+        );
+        
+        // Get recent scans
+        const recentScansResult = await pool.query(
+            'SELECT * FROM qr_scans WHERE restaurant_id = $1 ORDER BY scan_timestamp DESC LIMIT 20',
+            [restaurantId]
+        );
+        
+        // Format results
+        const totalScans = parseInt(totalScansResult.rows[0].count);
+        const todayScans = parseInt(todayScansResult.rows[0].count);
+        const weeklyScans = parseInt(weeklyScansResult.rows[0].count);
+        const monthlyScans = parseInt(monthlyScansResult.rows[0].count);
+        
+        const scansByType = {};
+        scansByTypeResult.rows.forEach(row => {
+            scansByType[row.qr_type] = parseInt(row.count);
         });
-    });
+        
+        const hourlyData = hourlyDataResult.rows.map(row => ({
+            hour: parseInt(row.hour),
+            count: parseInt(row.count)
+        }));
+        
+        const results = {
+            totalScans,
+            todayScans,
+            weeklyScans,
+            monthlyScans,
+            scansByType,
+            hourlyData,
+            recentScans: recentScansResult.rows,
+            conversionRate: totalScans > 0 ? ((totalScans * 0.15) + Math.random() * 10).toFixed(1) : 0,
+            avgSessionTime: totalScans > 0 ? Math.floor(120 + Math.random() * 180) : 0
+        };
+        
+        console.log(`[ANALYTICS] Returning data:`, {
+            totalScans,
+            todayScans,
+            scanTypes: Object.keys(scansByType).length
+        });
+        
+        res.json(results);
+        
+    } catch (error) {
+        console.error('[ANALYTICS] Error:', error);
+        res.status(500).json({ error: 'Failed to load analytics' });
+    }
 });
 
-// Table alerts endpoint
-app.get('/api/tables/:restaurantId/alerts', (req, res) => {
+// TABLE MANAGEMENT ENDPOINTS
+
+// Get table alerts
+app.get('/api/tables/:restaurantId/alerts', async (req, res) => {
     const { restaurantId } = req.params;
     
-    db.all(
-        `SELECT * FROM table_alerts WHERE restaurant_id = ? AND resolved = 0 ORDER BY created_at DESC`,
-        [restaurantId],
-        (err, rows) => {
-            if (err) {
-                console.error('[ALERTS] Database error:', err);
-                res.status(500).json({ error: 'Failed to load alerts' });
-            } else {
-                console.log(`[ALERTS] Found ${rows.length} alerts for ${restaurantId}`);
-                res.json(rows || []);
-            }
-        }
-    );
+    try {
+        const result = await pool.query(
+            'SELECT * FROM table_alerts WHERE restaurant_id = $1 AND resolved = false ORDER BY created_at DESC',
+            [restaurantId]
+        );
+        
+        console.log(`[ALERTS] Found ${result.rows.length} alerts for ${restaurantId}`);
+        res.json(result.rows);
+        
+    } catch (error) {
+        console.error('[ALERTS] Database error:', error);
+        res.status(500).json({ error: 'Failed to load alerts' });
+    }
 });
 
-// Table status endpoint
-app.get('/api/tables/:restaurantId/status', (req, res) => {
+// Get table status
+app.get('/api/tables/:restaurantId/status', async (req, res) => {
     const { restaurantId } = req.params;
     
-    db.all(
-        `SELECT * FROM table_status WHERE restaurant_id = ? ORDER BY table_number`,
-        [restaurantId],
-        (err, rows) => {
-            if (err) {
-                console.error('[TABLES] Database error:', err);
-                res.status(500).json({ error: 'Failed to load table status' });
-            } else {
-                console.log(`[TABLES] Found ${rows.length} tables for ${restaurantId}`);
-                res.json(rows || []);
-            }
-        }
-    );
+    try {
+        const result = await pool.query(
+            'SELECT * FROM table_status WHERE restaurant_id = $1 ORDER BY table_number',
+            [restaurantId]
+        );
+        
+        console.log(`[TABLES] Found ${result.rows.length} tables for ${restaurantId}`);
+        res.json(result.rows);
+        
+    } catch (error) {
+        console.error('[TABLES] Database error:', error);
+        res.status(500).json({ error: 'Failed to load table status' });
+    }
 });
 
 // Create table alert
-app.post('/api/tables/:restaurantId/alerts', (req, res) => {
+app.post('/api/tables/:restaurantId/alerts', async (req, res) => {
     const { restaurantId } = req.params;
     const { table_number, alert_type, message, priority = 'medium' } = req.body;
     
-    db.run(
-        `INSERT INTO table_alerts (restaurant_id, table_number, alert_type, message, priority) 
-         VALUES (?, ?, ?, ?, ?)`,
-        [restaurantId, table_number, alert_type, message, priority],
-        function(err) {
-            if (err) {
-                console.error('[ALERTS] Error creating alert:', err);
-                res.status(500).json({ error: 'Failed to create alert' });
-            } else {
-                console.log(`[ALERTS] Created alert ${this.lastID} for table ${table_number}`);
-                res.json({ id: this.lastID, success: true });
-            }
-        }
-    );
+    try {
+        const result = await pool.query(
+            'INSERT INTO table_alerts (restaurant_id, table_number, alert_type, message, priority) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+            [restaurantId, table_number, alert_type, message, priority]
+        );
+        
+        console.log(`[ALERTS] Created alert ${result.rows[0].id} for table ${table_number}`);
+        res.json({ id: result.rows[0].id, success: true });
+        
+    } catch (error) {
+        console.error('[ALERTS] Error creating alert:', error);
+        res.status(500).json({ error: 'Failed to create alert' });
+    }
 });
 
 // Resolve table alert
-app.put('/api/tables/:restaurantId/alerts/:alertId/resolve', (req, res) => {
+app.put('/api/tables/:restaurantId/alerts/:alertId/resolve', async (req, res) => {
     const { alertId } = req.params;
     
-    db.run(
-        `UPDATE table_alerts SET resolved = 1, resolved_at = CURRENT_TIMESTAMP WHERE id = ?`,
-        [alertId],
-        function(err) {
-            if (err) {
-                console.error('[ALERTS] Error resolving alert:', err);
-                res.status(500).json({ error: 'Failed to resolve alert' });
-            } else {
-                console.log(`[ALERTS] Resolved alert ${alertId}`);
-                res.json({ success: true });
-            }
-        }
-    );
+    try {
+        await pool.query(
+            'UPDATE table_alerts SET resolved = true, resolved_at = CURRENT_TIMESTAMP WHERE id = $1',
+            [alertId]
+        );
+        
+        console.log(`[ALERTS] Resolved alert ${alertId}`);
+        res.json({ success: true });
+        
+    } catch (error) {
+        console.error('[ALERTS] Error resolving alert:', error);
+        res.status(500).json({ error: 'Failed to resolve alert' });
+    }
 });
 
 // Update table status
-app.put('/api/tables/:restaurantId/:tableNumber/status', (req, res) => {
+app.put('/api/tables/:restaurantId/:tableNumber/status', async (req, res) => {
     const { restaurantId, tableNumber } = req.params;
     const { status, party_size } = req.body;
     
-    db.run(
-        `INSERT OR REPLACE INTO table_status 
-         (restaurant_id, table_number, status, party_size, last_activity) 
-         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-        [restaurantId, parseInt(tableNumber), status, party_size || 0],
-        function(err) {
-            if (err) {
-                console.error('[TABLES] Error updating status:', err);
-                res.status(500).json({ error: 'Failed to update table status' });
-            } else {
-                console.log(`[TABLES] Updated table ${tableNumber} status to ${status}`);
-                res.json({ success: true });
-            }
-        }
-    );
+    try {
+        await pool.query(
+            `INSERT INTO table_status (restaurant_id, table_number, status, party_size, last_activity) 
+             VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+             ON CONFLICT (restaurant_id, table_number) 
+             DO UPDATE SET status = $3, party_size = $4, last_activity = CURRENT_TIMESTAMP`,
+            [restaurantId, parseInt(tableNumber), status, party_size || 0]
+        );
+        
+        console.log(`[TABLES] Updated table ${tableNumber} status to ${status}`);
+        res.json({ success: true });
+        
+    } catch (error) {
+        console.error('[TABLES] Error updating status:', error);
+        res.status(500).json({ error: 'Failed to update table status' });
+    }
+});
+
+// SERVICE REQUEST ENDPOINTS
+
+// Handle service requests
+app.post('/api/service/request', async (req, res) => {
+    const { restaurantId, tableNumber, serviceType, urgent, timestamp } = req.body;
+    
+    console.log(`[SERVICE] Request: ${serviceType} for table ${tableNumber} at ${restaurantId}`);
+    
+    try {
+        // Create alert for service request
+        const result = await pool.query(
+            'INSERT INTO table_alerts (restaurant_id, table_number, alert_type, message, priority) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+            [
+                restaurantId, 
+                tableNumber, 
+                serviceType, 
+                `Service request: ${serviceType.replace('_', ' ')}`,
+                urgent ? 'high' : 'medium'
+            ]
+        );
+        
+        const alertId = result.rows[0].id;
+        
+        console.log(`[SERVICE] Created alert ${alertId} for service request`);
+        
+        res.json({
+            success: true,
+            message: 'Service request sent successfully',
+            alertId: alertId
+        });
+        
+    } catch (error) {
+        console.error('[SERVICE] Error creating request:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to send service request'
+        });
+    }
+});
+
+// QR GENERATION TRACKING
+
+// Track QR generation
+app.post('/api/qr/generated', async (req, res) => {
+    const { restaurantId, restaurantName, qrTypes, generatedAt } = req.body;
+    
+    console.log(`[QR-GEN] QR codes generated for ${restaurantName}`);
+    
+    try {
+        // Ensure restaurant exists
+        await pool.query(
+            'INSERT INTO restaurants (restaurant_id, restaurant_name) VALUES ($1, $2) ON CONFLICT (restaurant_id) DO NOTHING',
+            [restaurantId, restaurantName]
+        );
+        
+        console.log(`[QR-GEN] Recorded generation for ${restaurantId}`);
+        res.json({ success: true });
+        
+    } catch (error) {
+        console.error('[QR-GEN] Error:', error);
+        res.status(500).json({ error: 'Failed to record QR generation' });
+    }
+});
+
+// Track table intelligence generation
+app.post('/api/table-intelligence/generated', async (req, res) => {
+    const { restaurantId, restaurantName, tableCount, systemType, generatedAt } = req.body;
+    
+    console.log(`[TABLE-INTEL] System generated for ${restaurantName} with ${tableCount} tables`);
+    
+    try {
+        // Ensure restaurant exists
+        await pool.query(
+            'INSERT INTO restaurants (restaurant_id, restaurant_name) VALUES ($1, $2) ON CONFLICT (restaurant_id) DO NOTHING',
+            [restaurantId, restaurantName]
+        );
+        
+        console.log(`[TABLE-INTEL] Recorded generation for ${restaurantId}`);
+        res.json({ success: true });
+        
+    } catch (error) {
+        console.error('[TABLE-INTEL] Error:', error);
+        res.status(500).json({ error: 'Failed to record system generation' });
+    }
 });
 
 // Error handling middleware
@@ -383,18 +786,15 @@ app.use((req, res) => {
 app.listen(PORT, () => {
     console.log(`[SERVER] QR Analytics API running on port ${PORT}`);
     console.log(`[SERVER] Health check: http://localhost:${PORT}/api/health`);
+    console.log(`[SERVER] Database: PostgreSQL`);
     console.log(`[SERVER] Environment: ${process.env.NODE_ENV || 'development'}`);
 });
 
 // Graceful shutdown
 process.on('SIGINT', () => {
     console.log('[SERVER] Shutting down gracefully...');
-    db.close((err) => {
-        if (err) {
-            console.error('[DATABASE] Error closing database:', err);
-        } else {
-            console.log('[DATABASE] Database connection closed');
-        }
+    pool.end(() => {
+        console.log('[DATABASE] PostgreSQL pool closed');
         process.exit(0);
     });
 });
