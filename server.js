@@ -115,6 +115,64 @@ app.get('/api/tables/:restaurantId/status', async (req, res) => {
   }
 });
 
+// QR Code Generation
+app.post('/api/qr/generate', async (req, res) => {
+  try {
+    const { restaurantId, qrType, tableNumber, url } = req.body;
+    if (!restaurantId || !qrType) {
+      return res.status(400).json({ error: 'restaurantId and qrType required' });
+    }
+    const result = await pool.query(
+      'INSERT INTO qr_codes (restaurant_id, qr_type, table_number, url) VALUES ($1, $2, $3, $4) RETURNING id',
+      [restaurantId, qrType, tableNumber || null, url || '']
+    );
+    res.status(201).json({ qrId: result.rows[0].id, qrType, url });
+  } catch (error) {
+    console.error('QR generation error:', error.message);
+    res.status(500).json({ error: 'Failed to generate QR code' });
+  }
+});
+
+// Table Setup
+app.post('/api/tables/setup', async (req, res) => {
+  try {
+    const { restaurantId, numberOfTables } = req.body;
+    if (!restaurantId || !numberOfTables) {
+      return res.status(400).json({ error: 'restaurantId and numberOfTables required' });
+    }
+    await pool.query('DELETE FROM table_status WHERE restaurant_id = $1', [restaurantId]);
+    for (let i = 1; i <= numberOfTables; i++) {
+      await pool.query(
+        'INSERT INTO table_status (restaurant_id, table_number, status) VALUES ($1, $2, $3)',
+        [restaurantId, i, 'inactive']
+      );
+    }
+    res.status(201).json({ message: 'Tables set up successfully' });
+  } catch (error) {
+    console.error('Table setup error:', error.message);
+    res.status(500).json({ error: 'Failed to set up tables' });
+  }
+});
+
+// Service Request
+app.post('/api/service/request', async (req, res) => {
+  try {
+    const { restaurantId, tableNumber, requestType } = req.body;
+    if (!restaurantId || !tableNumber || !requestType) {
+      return res.status(400).json({ error: 'restaurantId, tableNumber, and requestType required' });
+    }
+    await pool.query(
+      'INSERT INTO table_alerts (restaurant_id, table_number, message, created_at) VALUES ($1, $2, $3, NOW())',
+      [restaurantId, tableNumber, requestType]
+    );
+    res.status(201).json({ message: 'Request sent successfully' });
+  } catch (error) {
+    console.error('Service request error:', error.message);
+    res.status(500).json({ error: 'Failed to send request' });
+  }
+});
+
+
 // Start server
 const port = process.env.PORT || 3001;
 app.listen(port, () => {
