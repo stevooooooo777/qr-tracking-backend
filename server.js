@@ -24,12 +24,12 @@ const pool = new Pool({
   }
 });
 
-// Initialize database tables
+// Initialize database tables and fix schema
 async function initializeDatabase() {
   try {
-    console.log('Initializing database tables...');
+    console.log('Initializing database tables and fixing schema...');
 
-    // Create users table
+    // Create users table if it doesn't exist
     await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
@@ -39,6 +39,14 @@ async function initializeDatabase() {
         restaurant_name VARCHAR(100),
         user_type VARCHAR(20) DEFAULT 'restaurant'
       );
+    `);
+
+    // Add missing columns to users table
+    await pool.query(`
+      ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS restaurant_id VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS restaurant_name VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS user_type VARCHAR(20) DEFAULT 'restaurant';
     `);
 
     // Create qr_scans table
@@ -117,7 +125,7 @@ async function initializeDatabase() {
       VALUES ($1, $2, $3, $4, NOW());
     `, ['demo', 'menu', 1, 'https://example.com/menu']);
 
-    console.log('Database tables initialized successfully');
+    console.log('Database tables initialized and schema fixed successfully');
   } catch (error) {
     console.error('Database initialization error:', error.message);
   }
