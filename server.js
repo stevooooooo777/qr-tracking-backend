@@ -24,6 +24,112 @@ const pool = new Pool({
   }
 });
 
+// Initialize database tables
+async function initializeDatabase() {
+  try {
+    console.log('Initializing database tables...');
+
+    // Create users table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        email VARCHAR(100) UNIQUE NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        restaurant_id VARCHAR(50),
+        restaurant_name VARCHAR(100),
+        user_type VARCHAR(20) DEFAULT 'restaurant'
+      );
+    `);
+
+    // Create qr_scans table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS qr_scans (
+        id SERIAL PRIMARY KEY,
+        restaurant_id VARCHAR(50),
+        qr_type VARCHAR(20),
+        table_number INTEGER,
+        timestamp TIMESTAMP DEFAULT NOW()
+      );
+    `);
+
+    // Create table_alerts table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS table_alerts (
+        id SERIAL PRIMARY KEY,
+        restaurant_id VARCHAR(50),
+        table_number INTEGER,
+        message TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+
+    // Create table_status table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS table_status (
+        id SERIAL PRIMARY KEY,
+        restaurant_id VARCHAR(50),
+        table_number INTEGER,
+        status VARCHAR(20) DEFAULT 'inactive'
+      );
+    `);
+
+    // Create qr_codes table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS qr_codes (
+        id SERIAL PRIMARY KEY,
+        restaurant_id VARCHAR(50),
+        qr_type VARCHAR(50),
+        table_number INTEGER,
+        url TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+
+    // Insert test data into users
+    const passwordHash = await bcrypt.hash('testpassword', 10);
+    await pool.query(`
+      INSERT INTO users (email, password_hash, restaurant_id, restaurant_name, user_type)
+      VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT (email) DO NOTHING;
+    `, ['test@example.com', passwordHash, 'demo', 'Demo Restaurant', 'restaurant']);
+
+    // Insert test data into qr_scans
+    await pool.query(`
+      INSERT INTO qr_scans (restaurant_id, qr_type, table_number, timestamp)
+      VALUES ($1, $2, $3, NOW());
+    `, ['demo', 'menu', 1]);
+
+    // Insert test data into table_alerts
+    await pool.query(`
+      INSERT INTO table_alerts (restaurant_id, table_number, message, created_at)
+      VALUES ($1, $2, $3, NOW());
+    `, ['demo', 1, 'Ready to order']);
+
+    // Insert test data into table_status
+    await pool.query(`
+      INSERT INTO table_status (restaurant_id, table_number, status)
+      VALUES ($1, $2, $3);
+    `, ['demo', 1, 'active']);
+
+    // Insert test data into qr_codes
+    await pool.query(`
+      INSERT INTO qr_codes (restaurant_id, qr_type, table_number, url, created_at)
+      VALUES ($1, $2, $3, $4, NOW());
+    `, ['demo', 'menu', 1, 'https://example.com/menu']);
+
+    console.log('Database tables initialized successfully');
+  } catch (error) {
+    console.error('Database initialization error:', error.message);
+  }
+}
+
+// Run initialization
+initializeDatabase().then(() => {
+  console.log('Database initialization complete');
+}).catch((err) => {
+  console.error('Failed to initialize database:', err.message);
+});
+
 // Test DB connection
 pool.connect((err, client, release) => {
   if (err) {
@@ -131,9 +237,9 @@ app.get('/api/analytics/:restaurantId', async (req, res) => {
     const result = await pool.query('SELECT * FROM qr_scans WHERE restaurant_id = $1', [restaurantId]);
     res.json({
       totalScans: result.rowCount,
-      todayScans: 0, // Placeholder, replace with real query
-      weeklyScans: 0, // Placeholder, replace with real query
-      monthlyScans: 0, // Placeholder, replace with real query
+      todayScans: 0,
+      weeklyScans: 0,
+      monthlyScans: 0,
       scansByType: {},
       recentScans: result.rows,
       hourlyData: [],
