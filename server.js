@@ -35,6 +35,7 @@ async function initializeDatabase() {
         id SERIAL PRIMARY KEY,
         email VARCHAR(100) UNIQUE NOT NULL,
         password_hash VARCHAR(255) NOT NULL,
+        full_name VARCHAR(100),
         restaurant_id VARCHAR(50),
         restaurant_name VARCHAR(100),
         user_type VARCHAR(20) DEFAULT 'restaurant'
@@ -44,6 +45,7 @@ async function initializeDatabase() {
     // Add missing columns to users table
     await pool.query(`
       ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS full_name VARCHAR(100),
       ADD COLUMN IF NOT EXISTS restaurant_id VARCHAR(50),
       ADD COLUMN IF NOT EXISTS restaurant_name VARCHAR(100),
       ADD COLUMN IF NOT EXISTS user_type VARCHAR(20) DEFAULT 'restaurant';
@@ -96,10 +98,10 @@ async function initializeDatabase() {
     // Insert test data into users
     const passwordHash = await bcrypt.hash('testpassword', 10);
     await pool.query(`
-      INSERT INTO users (email, password_hash, restaurant_id, restaurant_name, user_type)
-      VALUES ($1, $2, $3, $4, $5)
+      INSERT INTO users (email, password_hash, full_name, restaurant_id, restaurant_name, user_type)
+      VALUES ($1, $2, $3, $4, $5, $6)
       ON CONFLICT (email) DO NOTHING;
-    `, ['test@example.com', passwordHash, 'demo', 'Demo Restaurant', 'restaurant']);
+    `, ['test@example.com', passwordHash, 'Test User', 'demo', 'Demo Restaurant', 'restaurant']);
 
     // Insert test data into qr_scans
     await pool.query(`
@@ -156,7 +158,7 @@ app.get('/api/health', (req, res) => {
 // Register endpoint
 app.post('/api/auth/register', async (req, res) => {
   try {
-    const { email, password, restaurantName } = req.body;
+    const { email, password, restaurantName, fullName } = req.body;
     if (!email || !password || !restaurantName) {
       return res.status(400).json({ error: 'Email, password, and restaurant name required' });
     }
@@ -180,8 +182,8 @@ app.post('/api/auth/register', async (req, res) => {
 
     // Insert new user
     const result = await pool.query(
-      'INSERT INTO users (email, password_hash, restaurant_id, restaurant_name, user_type) VALUES ($1, $2, $3, $4, $5) RETURNING id, email, restaurant_id, restaurant_name, user_type',
-      [email, passwordHash, restaurantId, restaurantName, 'restaurant']
+      'INSERT INTO users (email, password_hash, full_name, restaurant_id, restaurant_name, user_type) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, email, full_name, restaurant_id, restaurant_name, user_type',
+      [email, passwordHash, fullName || 'Unknown', restaurantId, restaurantName, 'restaurant']
     );
 
     const user = result.rows[0];
