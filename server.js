@@ -132,6 +132,14 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
+
+
+
+
+
+
+
+
 // Login endpoint
 app.post('/api/auth/login', async (req, res) => {
   try {
@@ -189,12 +197,9 @@ app.get('/api/analytics/:restaurantId', async (req, res) => {
     
     const result = await pool.query('SELECT * FROM qr_scans WHERE restaurant_id = $1 ORDER BY timestamp DESC LIMIT 100', [restaurantId]);
     
-    // Basic aggregation
-    const totalScans = result.rowCount;
-    
     res.json({
-      totalScans,
-      todayScans: 0, // Add real logic later
+      totalScans: result.rowCount,
+      todayScans: 0,
       weeklyScans: 0,
       monthlyScans: 0,
       scansByType: {},
@@ -209,6 +214,15 @@ app.get('/api/analytics/:restaurantId', async (req, res) => {
     res.status(500).json({ error: 'Failed to load analytics' });
   }
 });
+
+
+
+
+
+
+
+
+
 
 // Alerts endpoint
 app.get('/api/tables/:restaurantId/alerts', async (req, res) => {
@@ -255,4 +269,82 @@ app.post('/api/qr/generate', async (req, res) => {
     res.status(201).json({ 
       qrId: result.rows[0].id, 
       qrType, 
-      url: url || `https://qr.insane.marketing/${qrType}/${result.rows[0
+      url: url || `https://qr.insane.marketing/${qrType}/${result.rows[0].id}`
+    });
+  } catch (error) {
+    console.error('QR generation error:', error.message);
+    res.status(500).json({ error: 'Failed to generate QR code' });
+  }
+});
+
+// Table Setup
+app.post('/api/tables/setup', async (req, res) => {
+  try {
+    const { restaurantId, numberOfTables } = req.body;
+    
+    if (!restaurantId || !numberOfTables) {
+      return res.status(400).json({ error: 'restaurantId and numberOfTables required' });
+    }
+
+    // Clear existing tables for this restaurant
+    await pool.query('DELETE FROM table_status WHERE restaurant_id = $1', [restaurantId]);
+    
+    // Create new tables
+    for (let i = 1; i <= numberOfTables; i++) {
+await pool.query(
+        'INSERT INTO table_status (restaurant_id, table_number, status) VALUES ($1, $2, $3)',
+        [restaurantId, i, 'inactive']
+      );
+    }
+    
+    res.status(201).json({ 
+      message: 'Tables set up successfully',
+      tablesCreated: numberOfTables 
+    });
+  } catch (error) {
+    console.error('Table setup error:', error.message);
+    res.status(500).json({ error: 'Failed to set up tables' });
+  }
+});
+
+// Service Request
+app.post('/api/service/request', async (req, res) => {
+  try {
+    const { restaurantId, tableNumber, requestType } = req.body;
+    
+    if (!restaurantId || !tableNumber || !requestType) {
+      return res.status(400).json({ error: 'restaurantId, tableNumber, and requestType required' });
+    }
+
+    await pool.query(
+      'INSERT INTO table_alerts (restaurant_id, table_number, message, created_at) VALUES ($1, $2, $3, NOW())',
+      [restaurantId, tableNumber, requestType]
+    );
+    
+    res.status(201).json({ 
+      message: 'Request sent successfully',
+      requestType,
+      tableNumber
+    });
+  } catch (error) {
+    console.error('Service request error:', error.message);
+    res.status(500).json({ error: 'Failed to send request' });
+  }
+});
+
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('Global error:', err.message);
+  res.status(500).json({ error: 'Server error' });
+});
+
+// 404 handler for unmatched routes
+app.use((req, res) => {
+  res.status(404).json({ error: 'Endpoint not found' });
+});
+
+// Start server
+const port = process.env.PORT || 3001;
+app.listen(port, () => {
+  console.log(`Server listening on port ${port}`);
+});
