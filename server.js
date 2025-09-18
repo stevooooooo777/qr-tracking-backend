@@ -3,6 +3,8 @@ const cors = require('cors');
 const { Pool } = require('pg');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+
+// Create Express app
 const app = express();
 
 // Middleware - CORS first
@@ -21,54 +23,48 @@ const pool = new Pool({
     rejectUnauthorized: false,
     minVersion: 'TLSv1.2',
     maxVersion: 'TLSv1.3'
-  }
+  },
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
+});
+
+// Graceful shutdown handling
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  pool.end(() => {
+    console.log('Pool has been drained');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully');
+  pool.end(() => {
+    console.log('Pool has been drained');
+    process.exit(0);
+  });
 });
 
 // Test DB connection
-pool.connect((err, client, release) => {
-  if (err) {
-    console.error('DB connection error:', err.stack);
-    return;
-  }
-  console.log('Connected to Postgres');
-  release();
+pool.on('connect', (client) => {
+  console.log('Client connected to Postgres');
+});
+
+pool.on('error', (err) => {
+  console.error('Unexpected error on idle client', err);
+  process.exit(-1);
 });
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.status(200).json({ status: 'ok' });
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
-
-// Helper function to get or create restaurant
-async function getOrCreateRestaurant(restaurantName) {
-  try {
-    // Check if restaurant exists
-    const existing = await pool.query(
-      'SELECT id, name FROM restaurants WHERE LOWER(name) = LOWER($1)',
-      [restaurantName]
-    );
-    
-    if (existing.rows.length > 0) {
-      return existing.rows[0];
-    }
-
-    // Create new restaurant
-    const result = await pool.query(
-      'INSERT INTO restaurants (name) VALUES ($1) RETURNING id, name',
-      [restaurantName]
-    );
-    
-    return result.rows[0];
-  } catch (error) {
-    console.error('Restaurant error:', error.message);
-    throw error;
-  }
-}
 
 // Register endpoint
 app.post('/api/auth/register', async (req, res) => {
   try {
-    const { email, password, restaurantName, fullName } = req.body;
+    const { email, password, restaurantName } = req.body;
     
     if (!email || !password || !restaurantName) {
       return res.status(400).json({ error: 'Email, password, and restaurant name required' });
@@ -80,31 +76,54 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(409).json({ error: 'Email already registered' });
     }
 
-    // Get or create restaurant
-    const restaurant = await getOrCreateRestaurant(restaurantName);
-
     // Hash password
     const passwordHash = await bcrypt.hash(password, 10);
 
+    // Find or create restaurant
+    let restaurantId;
+    try {
+      const restaurantResult = await pool.query(
+        'INSERT INTO restaurants (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id',
+        [restaurantName]
+      );
+      restaurantId = restaurantResult.rows[0].id;
+    } catch (restaurantError) {
+      console.log('Restaurant creation/update error:', restaurantError.message);
+      // Get existing restaurant ID
+      const existingRestaurant = await pool.query('SELECT id FROM restaurants WHERE name = $1', [restaurantName]);
+      if (existingRestaurant.rows.length > 0) {
+        restaurantId = existingRestaurant.rows[0].id;
+      } else {
+        return res.status(500).json({ error: 'Failed to create or find restaurant' });
+      }
+    }
+
     // Insert new user
     const result = await pool.query(
-      'INSERT INTO users (email, password_hash, full_name, restaurant_id, created_at) VALUES ($1, $2, $3, $4, NOW()) RETURNING id, email, full_name, restaurant_id',
-      [email, passwordHash, fullName || 'Unknown User', restaurant.id]
+      'INSERT INTO users (email, password_hash, full_name, restaurant_id) VALUES ($1, $2, $3, $4) RETURNING id, email, full_name, restaurant_id',
+      [email, passwordHash, restaurantName || 'New User', restaurantId]
     );
 
     const user = result.rows[0];
 
-    // Generate JWT
+    // Generate JWT - ensure secret exists
+    if (!process.env.JWT_SECRET) {
+      console.error('JWT_SECRET environment variable not set');
+      return res.status(500).json({ error: 'Server configuration error' });
+    }
+
     const token = jwt.sign(
-      { userId: user.id, restaurantId: restaurant.id, restaurantName: restaurant.name, userType: 'restaurant' },
+      { userId: user.id, restaurantId: user.restaurant_id, userType: 'restaurant' },
       process.env.JWT_SECRET,
-      { expiresIn: '1h' }
+      { expiresIn: '24h' }
     );
+
+    console.log(`New user registered: ${email} for restaurant ${restaurantName}`);
 
     res.status(201).json({
       token,
-      restaurantName: restaurant.name,
-      restaurantId: restaurant.id,
+      restaurantName,
+      restaurantId: user.restaurant_id,
       userType: 'restaurant'
     });
   } catch (error) {
@@ -117,17 +136,12 @@ app.post('/api/auth/register', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
+    
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password required' });
     }
 
-    const result = await pool.query(`
-      SELECT u.id, u.email, u.full_name, u.restaurant_id, r.name as restaurant_name 
-      FROM users u 
-      LEFT JOIN restaurants r ON u.restaurant_id = r.id 
-      WHERE u.email = $1
-    `, [email]);
-
+    const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
     if (result.rows.length === 0) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -139,15 +153,26 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    // Get restaurant name
+    const restaurantResult = await pool.query('SELECT name FROM restaurants WHERE id = $1', [user.restaurant_id]);
+    const restaurantName = restaurantResult.rows[0]?.name || 'Unknown Restaurant';
+
+    if (!process.env.JWT_SECRET) {
+      console.error('JWT_SECRET environment variable not set');
+      return res.status(500).json({ error: 'Server configuration error' });
+    }
+
     const token = jwt.sign(
-      { userId: user.id, restaurantId: user.restaurant_id, restaurantName: user.restaurant_name, userType: 'restaurant' },
+      { userId: user.id, restaurantId: user.restaurant_id, userType: 'restaurant' },
       process.env.JWT_SECRET,
-      { expiresIn: '1h' }
+      { expiresIn: '24h' }
     );
+
+    console.log(`User logged in: ${email}`);
 
     res.json({
       token,
-      restaurantName: user.restaurant_name,
+      restaurantName,
       restaurantId: user.restaurant_id,
       userType: 'restaurant'
     });
@@ -161,12 +186,17 @@ app.post('/api/auth/login', async (req, res) => {
 app.get('/api/analytics/:restaurantId', async (req, res) => {
   try {
     const { restaurantId } = req.params;
+    
     const result = await pool.query('SELECT * FROM qr_scans WHERE restaurant_id = $1 ORDER BY timestamp DESC LIMIT 100', [restaurantId]);
+    
+    // Basic aggregation
+    const totalScans = result.rowCount;
+    
     res.json({
-      totalScans: result.rowCount,
-      todayScans: 0, // TODO: Add real calculation
-      weeklyScans: 0, // TODO: Add real calculation
-      monthlyScans: 0, // TODO: Add real calculation
+      totalScans,
+      todayScans: 0, // Add real logic later
+      weeklyScans: 0,
+      monthlyScans: 0,
       scansByType: {},
       recentScans: result.rows,
       hourlyData: [],
@@ -184,7 +214,9 @@ app.get('/api/analytics/:restaurantId', async (req, res) => {
 app.get('/api/tables/:restaurantId/alerts', async (req, res) => {
   try {
     const { restaurantId } = req.params;
-    const result = await pool.query('SELECT * FROM table_alerts WHERE restaurant_id = $1 ORDER BY created_at DESC LIMIT 20', [restaurantId]);
+    
+    const result = await pool.query('SELECT * FROM table_alerts WHERE restaurant_id = $1 ORDER BY created_at DESC LIMIT 50', [restaurantId]);
+    
     res.json(result.rows);
   } catch (error) {
     console.error(`Alerts error for ${req.params.restaurantId}:`, error.message);
@@ -196,7 +228,9 @@ app.get('/api/tables/:restaurantId/alerts', async (req, res) => {
 app.get('/api/tables/:restaurantId/status', async (req, res) => {
   try {
     const { restaurantId } = req.params;
+    
     const result = await pool.query('SELECT * FROM table_status WHERE restaurant_id = $1 ORDER BY table_number', [restaurantId]);
+    
     res.json(result.rows);
   } catch (error) {
     console.error(`Table status error for ${req.params.restaurantId}:`, error.message);
@@ -208,74 +242,17 @@ app.get('/api/tables/:restaurantId/status', async (req, res) => {
 app.post('/api/qr/generate', async (req, res) => {
   try {
     const { restaurantId, qrType, tableNumber, url } = req.body;
+    
     if (!restaurantId || !qrType) {
       return res.status(400).json({ error: 'restaurantId and qrType required' });
     }
+
     const result = await pool.query(
-      'INSERT INTO qr_codes (restaurant_id, qr_type, table_number, url) VALUES ($1, $2, $3, $4) RETURNING id, qr_type, url',
+      'INSERT INTO qr_codes (restaurant_id, qr_type, table_number, url) VALUES ($1, $2, $3, $4) RETURNING id',
       [restaurantId, qrType, tableNumber || null, url || '']
     );
-    res.status(201).json({ qrId: result.rows[0].id, qrType: result.rows[0].qr_type, url: result.rows[0].url });
-  } catch (error) {
-    console.error('QR generation error:', error.message);
-    res.status(500).json({ error: 'Failed to generate QR code' });
-  }
-});
-
-// Table Setup
-app.post('/api/tables/setup', async (req, res) => {
-  try {
-    const { restaurantId, numberOfTables } = req.body;
-    if (!restaurantId || !numberOfTables) {
-      return res.status(400).json({ error: 'restaurantId and numberOfTables required' });
-    }
-
-    // Clear existing tables for this restaurant
-    await pool.query('DELETE FROM table_status WHERE restaurant_id = $1', [restaurantId]);
-
-    // Insert new tables
-    for (let i = 1; i <= numberOfTables; i++) {
-      await pool.query(
-        'INSERT INTO table_status (restaurant_id, table_number, status) VALUES ($1, $2, $3)',
-        [restaurantId, i, 'inactive']
-      );
-    }
-
-    res.status(201).json({ message: `Tables 1-${numberOfTables} set up successfully` });
-  } catch (error) {
-    console.error('Table setup error:', error.message);
-    res.status(500).json({ error: 'Failed to set up tables' });
-  }
-});
-
-// Service Request
-app.post('/api/service/request', async (req, res) => {
-  try {
-    const { restaurantId, tableNumber, requestType } = req.body;
-    if (!restaurantId || !tableNumber || !requestType) {
-      return res.status(400).json({ error: 'restaurantId, tableNumber, and requestType required' });
-    }
-
-    await pool.query(
-      'INSERT INTO table_alerts (restaurant_id, table_number, message, created_at) VALUES ($1, $2, $3, NOW())',
-      [restaurantId, tableNumber, requestType]
-    );
-
-    res.status(201).json({ message: 'Request sent successfully' });
-  } catch (error) {
-    console.error('Service request error:', error.message);
-    res.status(500).json({ error: 'Failed to send request' });
-  }
-});
-
-// Global error handler
-app.use((err, req, res, next) => {
-  console.error('Global error:', err.message);
-  res.status(500).json({ error: 'Server error' });
-});
-
-// Start server
-const port = process.env.PORT || 3001;
-app.listen(port, () => {
-  console.log(`Server listening on port ${port}`);
-});
+    
+    res.status(201).json({ 
+      qrId: result.rows[0].id, 
+      qrType, 
+      url: url || `https://qr.insane.marketing/${qrType}/${result.rows[0
