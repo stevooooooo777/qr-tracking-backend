@@ -57,8 +57,31 @@ pool.on('error', (err) => {
 });
 
 // Health check
-app.get('/api/health', (req, res) => {
-  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+app.get('/api/health', async (req, res) => {
+  try {
+    // Test database connection
+    const result = await pool.query('SELECT NOW()');
+    const dbTime = result.rows[0].now;
+    
+    console.log(`[HEALTH] Health check passed - DB time: ${dbTime}`);
+    
+    res.status(200).json({
+      status: 'Server is healthy',
+      timestamp: new Date().toISOString(),
+      dbConnected: true,
+      dbTime: dbTime.toISOString()
+    });
+  } catch (error) {
+    console.error('[HEALTH] Health check failed:', error.message);
+    res.status(500).json({
+      status: 'Server unhealthy',
+      error: error.message
+    });
+  }
+});
+
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
 });
 
 // Register endpoint
