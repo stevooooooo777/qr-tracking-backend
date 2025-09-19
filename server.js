@@ -46,7 +46,7 @@ process.on('SIGINT', () => {
   });
 });
 
-// Test DB connection
+// Test connection
 pool.on('connect', (client) => {
   console.log('Client connected to Postgres');
 });
@@ -93,7 +93,7 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'Email, password, and restaurant name required' });
     }
 
-    // Check if user exists
+    // Check user exists
     const existingUser = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
     if (existingUser.rows.length > 0) {
       return res.status(409).json({ error: 'Email already registered' });
@@ -376,3 +376,5 @@ setInterval(() => {
   console.log('Keep-alive ping');
 }, 300000); // 5 minutes
 });
+H o b b y   p l a n   u p g r a d e   -   0 9 / 1 9 / 2 0 2 5   0 5 : 3 7 : 2 9  
+ 
