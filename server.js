@@ -7,7 +7,6 @@ const jwt = require('jsonwebtoken');
 const helmet = require('helmet');
 const Joi = require('joi');
 const webpush = require('web-push');
-console.log('Starting server initialization...');
 
 // Log startup
 console.log('DATABASE_URL:', process.env.DATABASE_URL);
@@ -1868,8 +1867,6 @@ app.patch('/api/service/resolve/:requestId', async (req, res) => {
 
 // Authentication endpoints 
 // Real Authentication System with PostgreSQL
-const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
 
 // JWT Secret
 const JWT_SECRET = process.env.JWT_SECRET;
