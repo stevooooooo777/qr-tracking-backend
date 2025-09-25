@@ -221,16 +221,29 @@ function authenticateToken(req, res, next) {
   });
 }
 
+const webpush = require('web-push');
+
 const vapidKeys = {
   publicKey: process.env.VAPID_PUBLIC_KEY,
   privateKey: process.env.VAPID_PRIVATE_KEY
 };
-webpush.setVapidDetails(
-  'mailto:support@insane.marketing',
-  vapidKeys.publicKey,
-  vapidKeys.privateKey
-);
 
+if (!vapidKeys.publicKey || !vapidKeys.privateKey) {
+  console.error('❌ VAPID_PUBLIC_KEY or VAPID_PRIVATE_KEY is not set in environment variables!');
+  process.exit(1);
+}
+
+try {
+  webpush.setVapidDetails(
+    'mailto:support@insane.marketing',
+    vapidKeys.publicKey,
+    vapidKeys.privateKey
+  );
+  console.log('✅ Web push VAPID details set successfully');
+} catch (error) {
+  console.error('❌ Failed to set VAPID details:', error.message);
+  process.exit(1);
+}
 
 
 // ======================================================
