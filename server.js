@@ -7,6 +7,7 @@ const jwt = require('jsonwebtoken');
 const helmet = require('helmet');
 const Joi = require('joi');
 const webpush = require('web-push');
+const rateLimit = require('express-rate-limit');
 
 // Log startup
 console.log('DATABASE_URL:', process.env.DATABASE_URL);
@@ -202,7 +203,7 @@ const limiter = rateLimit({
   max: process.env.NODE_ENV === 'production' ? 1000 : 2000,
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
-  legacyHeaders: false,
+  legacyHeaders: false
 });
 app.use(limiter);
 
@@ -294,20 +295,22 @@ async function initializeDatabase() {
 
     // Create qr_scans table
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS qr_scans (
-        id SERIAL PRIMARY KEY,
-        restaurant_id VARCHAR(100) NOT NULL,
-        qr_id INTEGER,
-        qr_type VARCHAR(50) NOT NULL,
-        table_number INTEGER,
-        scanned_at TIMESTAMP DEFAULT NOW(),
-        user_agent TEXT,
-        ip_address INET,
-        destination_url TEXT,
-        FOREIGN KEY (restaurant_id) REFERENCES restaurants(restaurant_id) ON DELETE CASCADE,
-        FOREIGN KEY (qr_id) REFERENCES qr_codes(id) ON DELETE CASCADE
-      )
-    `);
+  CREATE TABLE IF NOT EXISTS qr_scans (
+    id SERIAL PRIMARY KEY,
+    restaurant_id VARCHAR(100) NOT NULL,
+    qr_id INTEGER,
+    qr_type VARCHAR(50) NOT NULL,
+    table_number INTEGER,
+    scan_timestamp TIMESTAMP DEFAULT NOW(),
+    user_agent TEXT,
+    ip_address INET,
+    referrer TEXT,
+    session_duration INTEGER,
+    converted BOOLEAN,
+    FOREIGN KEY (restaurant_id) REFERENCES restaurants(restaurant_id) ON DELETE CASCADE,
+    FOREIGN KEY (qr_id) REFERENCES qr_codes(id) ON DELETE CASCADE
+  )
+`);
 
     // Create table_sessions table
     await pool.query(`
@@ -469,7 +472,7 @@ async function initializeDatabase() {
     `);
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_qr_scans_restaurant_date 
-      ON qr_scans(restaurant_id, scanned_at DESC)
+      ON qr_scans(restaurant_id, scan_timestamp DESC)
     `);
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_table_sessions_restaurant_active 
@@ -775,12 +778,12 @@ class PredictiveAnalyticsEngine {
       // Get QR scan counts
       const scansLastHour = await pool.query(`
         SELECT COUNT(*) as count FROM qr_scans 
-        WHERE restaurant_id = $1 AND scanned_at > $2
+        WHERE restaurant_id = $1 AND scan_timestamp > $2
       `, [restaurantId, hourAgo]);
 
       const scansLast2Hours = await pool.query(`
         SELECT COUNT(*) as count FROM qr_scans 
-        WHERE restaurant_id = $1 AND scanned_at > $2
+        WHERE restaurant_id = $1 AND scan_timestamp > $2
       `, [restaurantId, twoHoursAgo]);
 
       // Get active table count as proxy for customer count
@@ -962,7 +965,7 @@ class PredictiveAnalyticsEngine {
     const hourAgo = new Date(Date.now() - 60 * 60 * 1000);
     const result = await pool.query(`
       SELECT COUNT(*) as scans FROM qr_scans 
-      WHERE restaurant_id = $1 AND scanned_at > $2
+      WHERE restaurant_id = $1 AND scan_timestamp > $2
     `, [restaurantId, hourAgo]);
 
     return {
@@ -1438,19 +1441,19 @@ app.get('/api/analytics/:restaurantId', async (req, res) => {
 
     // Get daily scans for last 7 days
     const dailyScansResult = await pool.query(`
-      SELECT DATE(scanned_at) as scan_date, COUNT(*) as scans 
+      SELECT DATE(scan_timestamp) as scan_date, COUNT(*) as scans 
       FROM qr_scans 
-      WHERE restaurant_id = $1 AND scanned_at >= NOW() - INTERVAL '7 days'
-      GROUP BY DATE(scanned_at) 
+      WHERE restaurant_id = $1 AND scan_timestamp >= NOW() - INTERVAL '7 days'
+      GROUP BY DATE(scan_timestamp) 
       ORDER BY scan_date
     `, [restaurantId]);
 
     // Get recent activity
     const recentActivityResult = await pool.query(`
-      SELECT qr_type, table_number, scanned_at, ip_address, destination_url
+      SELECT qr_type, table_number, scan_timestamp, ip_address, destination_url
       FROM qr_scans 
       WHERE restaurant_id = $1 
-      ORDER BY scanned_at DESC 
+      ORDER BY scan_timestamp DESC 
       LIMIT 10
     `, [restaurantId]);
 
@@ -1484,7 +1487,7 @@ app.get('/api/analytics/:restaurantId', async (req, res) => {
     const recentActivity = recentActivityResult.rows.map(row => ({
       qrType: row.qr_type,
       tableNumber: row.table_number,
-      timestamp: row.scanned_at,
+      timestamp: row.scan_timestamp,
       ip: row.ip_address?.toString().replace(/\.\d+$/, '.xxx'),
       destination: row.destination_url
     }));
@@ -1682,7 +1685,7 @@ app.get('/api/tables/:restaurantId/live', authenticateToken, async (req, res) =>
     const tablesResult = await pool.query(`
       SELECT table_number, 
              COUNT(*) as total_scans,
-             MAX(scanned_at) as last_activity
+             MAX(scan_timestamp) as last_activity
       FROM qr_scans 
       WHERE restaurant_id = $1 AND table_number IS NOT NULL
       GROUP BY table_number
@@ -1708,7 +1711,7 @@ app.get('/api/tables/:restaurantId/live', authenticateToken, async (req, res) =>
     const todayScansResult = await pool.query(`
       SELECT COUNT(*) as count
       FROM qr_scans 
-      WHERE restaurant_id = $1 AND DATE(scanned_at) = CURRENT_DATE
+      WHERE restaurant_id = $1 AND DATE(scan_timestamp) = CURRENT_DATE
     `, [restaurantId]);
 
     const tables = {};
@@ -2636,7 +2639,7 @@ app.post('/api/qr-scans', async (req, res) => {
     if (error) return res.status(400).json({ error: error.details[0].message });
 
     await pool.query(
-      'INSERT INTO qr_scans (restaurant_id, qr_id, qr_type, table_number, user_agent, ip_address, destination_url, scanned_at) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())',
+      'INSERT INTO qr_scans (restaurant_id, qr_id, qr_type, table_number, user_agent, ip_address, destination_url, scan_timestamp) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())',
       [restaurant_id, qr_id, qr_type, table_number, user_agent, ip_address, destination_url]
     );
 
