@@ -221,7 +221,6 @@ function authenticateToken(req, res, next) {
   });
 }
 
-const webpush = require('web-push');
 
 const vapidKeys = {
   publicKey: process.env.VAPID_PUBLIC_KEY,
