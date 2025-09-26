@@ -469,6 +469,7 @@ status VARCHAR(50),
         id SERIAL PRIMARY KEY,
         restaurant_id VARCHAR(100) NOT NULL,
         table_number INTEGER NOT NULL,
+status VARCHAR(50) NOT NULL,
         alert_type VARCHAR(50) NOT NULL,
         message TEXT,
         
@@ -515,7 +516,7 @@ status VARCHAR(50),
     `);
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_table_alerts_restaurant_status 
-      ON table_alerts(restaurant_id, created_at DESC)
+      ON table_alerts(restaurant_id, status, created_at DESC)
     `);
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_table_status_restaurant 
