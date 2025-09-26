@@ -299,53 +299,8 @@ console.log('✅ Restaurants table initialized');
     `);
 console.log('✅ Users table initialized');
 
-await pool.query(`
-      CREATE TABLE IF NOT EXISTS push_subscriptions (
-        id SERIAL PRIMARY KEY,
-        restaurant_id VARCHAR(100) NOT NULL,
-        staff_name VARCHAR(255) NOT NULL,
-        staff_type VARCHAR(50) NOT NULL,
-        subscription_data JSONB NOT NULL,
-        is_active BOOLEAN DEFAULT true,
-        created_at TIMESTAMP DEFAULT NOW(),
-        FOREIGN KEY (restaurant_id) REFERENCES restaurants(restaurant_id) ON DELETE CASCADE
-      )
-    `);
-    console.log('✅ Push subscriptions table initialized');
 
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS notification_log (
-        id SERIAL PRIMARY KEY,
-        alert_id VARCHAR(100) NOT NULL,
-        restaurant_id VARCHAR(100) NOT NULL,
-        table_number INTEGER,
-        notification_type VARCHAR(50) NOT NULL,
-        status VARCHAR(50) NOT NULL,
-        staff_notified JSONB,
-        created_at TIMESTAMP DEFAULT NOW(),
-        FOREIGN KEY (restaurant_id) REFERENCES restaurants(restaurant_id) ON DELETE CASCADE
-      )
-    `);
-    console.log('✅ Notification log table initialized');
  
-await pool.query(`
-      CREATE TABLE IF NOT EXISTS live_predictions (
-        id SERIAL PRIMARY KEY,
-        restaurant_id VARCHAR(100) NOT NULL,
-        prediction_type VARCHAR(50) NOT NULL,
-        prediction_time TIMESTAMP NOT NULL,
-        predicted_value DECIMAL(10,2),
-        confidence_score DECIMAL(5,4),
-        recommended_action TEXT,
-        actual_value DECIMAL(10,2),
-        accuracy_score DECIMAL(5,4),
-status VARCHAR(50),
-        created_at TIMESTAMP DEFAULT NOW(),
-        FOREIGN KEY (restaurant_id) REFERENCES restaurants(restaurant_id) ON DELETE CASCADE
-      )
-    `);
-    console.log('✅ Live predictions table initialized');
-
     // Create qr_codes table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS qr_codes (
@@ -484,6 +439,7 @@ status VARCHAR(50),
         recommended_action TEXT,
         actual_value DECIMAL(10,2),
         accuracy_score DECIMAL(5,4),
+status VARCHAR(50),
         created_at TIMESTAMP DEFAULT NOW(),
         FOREIGN KEY (restaurant_id) REFERENCES restaurants(restaurant_id) ON DELETE CASCADE
       )
