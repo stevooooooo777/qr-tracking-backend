@@ -43,12 +43,13 @@ app.use(express.json());
 console.log('Creating database pool...');
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-max: 5, 
-idleTimeoutMillis: 30000,
-connectionTimeoutMillis: 10000  
+  ssl: process.env.NODE_ENV === 'production' ? {
+    rejectUnauthorized: false  // This allows self-signed certificates
+  } : false,
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
 });
-
 if (!process.env.DATABASE_URL) {
   console.error('DATABASE_URL is not set in environment variables!');
   process.exit(1);
