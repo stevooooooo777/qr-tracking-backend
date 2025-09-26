@@ -33,18 +33,16 @@ app.use((req, res, next) => {
 });
 app.use(express.json());
 
-// Postgres connection with enhanced SSL
+// Postgres connection
 console.log('Creating database pool...');
+const { Pool } = require('pg');
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false,
-    minVersion: 'TLSv1.2',
-    maxVersion: 'TLSv1.3'
-  },
-  max: 5,  // Reduced for startup speed
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+};
+max: 5, 
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000,  // Increased timeout
+  connectionTimeoutMillis: 10000,  
 });
 
 if (!process.env.DATABASE_URL) {
@@ -273,6 +271,7 @@ async function initializeDatabase() {
         updated_at TIMESTAMP DEFAULT NOW()
       )
     `);
+console.log('✅ Restaurants table initialized');
 
     // Create users table
     await pool.query(`
@@ -290,6 +289,12 @@ async function initializeDatabase() {
         FOREIGN KEY (restaurant_id) REFERENCES restaurants(restaurant_id) ON DELETE CASCADE
       )
     `);
+console.log('✅ Users table initialized');
+  } catch (error) {
+    console.error('❌ Database initialization failed:', error);
+    throw error; // Ensure the error propagates to stop the server
+  }
+}
 
     // Create qr_codes table
     await pool.query(`
@@ -684,35 +689,6 @@ async function sendNotificationToStaff(restaurantId, notificationData, targetSta
         
         // SMS backup if available
         
-const smsClient = process.env.TWILIO_SID && process.env.TWILIO_AUTH_TOKEN ? twilio(
-  process.env.TWILIO_SID,
-  process.env.TWILIO_AUTH_TOKEN
-) : null;
-if (!smsClient) {
-  console.warn('⚠️ Twilio not configured - SMS backups disabled');
-}
-
-
-if (sub.phone_number && smsClient) {
-          try {
-            await smsClient.messages.create({
-              body: `🔔 ${notificationData.title}\n${notificationData.body}\n\nReply DONE when resolved.`,
-              from: process.env.TWILIO_PHONE_NUMBER,
-              to: sub.phone_number
-            });
-            staffNotified.push({
-              id: sub.id,
-              name: sub.staff_name,
-              type: sub.staff_type,
-              method: 'sms_backup'
-            });
-            console.log(`✅ SMS backup sent to ${sub.staff_name}`);
-          } catch (smsError) {
-            console.error(`❌ SMS backup failed:`, smsError.message);
-          }
-        }
-      }
-    }
 
     // Log notification attempt
     await pool.query(
@@ -2824,11 +2800,16 @@ app.use((err, req, res, next) => {
 
 async function startServer() {
   try {
+    console.log('Initializing database...');
     await initializeDatabase();
+    console.log('✅ Database initialization complete');
+
     await ensureDemoData(); // Ensure demo restaurants exist
-    
-    const server = app.listen(PORT, '0.0.0.0', () => {
-      console.log(`🚀 Restaurant Intelligence Server running on port ${PORT}`);
+    console.log('✅ Demo data ensured');
+
+    const server = app.listen(process.env.PORT || 8080, '0.0.0.0', () => {
+  console.log(`🚀 Restaurant Intelligence Server running on port ${process.env.PORT || 8080}`);
+
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log(`Analytics API: /api/analytics/[restaurantId]`);
       console.log(`QR Tracking: /qr/[restaurantId]/[qrType]`);
