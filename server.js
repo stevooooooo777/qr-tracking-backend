@@ -288,11 +288,7 @@ console.log('✅ Restaurants table initialized');
       )
     `);
 console.log('✅ Users table initialized');
-  } catch (error) {
-    console.error('❌ Database initialization failed:', error);
-    throw error; // Ensure the error propagates to stop the server
-  }
-}
+ 
 
     // Create qr_codes table
     await pool.query(`
