@@ -6,7 +6,13 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const helmet = require('helmet');
 const Joi = require('joi');
-const webpush = require('web-push');
+
+const webpush = require('web-push')
+webpush.setVapidDetails(
+  'mailto:your-email@example.com',
+  process.env.VAPID_PUBLIC_KEY,
+  process.env.VAPID_PRIVATE_KEY
+);
 const rateLimit = require('express-rate-limit');
 
 // Log startup
@@ -288,7 +294,53 @@ console.log('✅ Restaurants table initialized');
       )
     `);
 console.log('✅ Users table initialized');
+
+await pool.query(`
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id SERIAL PRIMARY KEY,
+        restaurant_id VARCHAR(100) NOT NULL,
+        staff_name VARCHAR(255) NOT NULL,
+        staff_type VARCHAR(50) NOT NULL,
+        subscription_data JSONB NOT NULL,
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP DEFAULT NOW(),
+        FOREIGN KEY (restaurant_id) REFERENCES restaurants(restaurant_id) ON DELETE CASCADE
+      )
+    `);
+    console.log('✅ Push subscriptions table initialized');
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS notification_log (
+        id SERIAL PRIMARY KEY,
+        alert_id VARCHAR(100) NOT NULL,
+        restaurant_id VARCHAR(100) NOT NULL,
+        table_number INTEGER,
+        notification_type VARCHAR(50) NOT NULL,
+        status VARCHAR(50) NOT NULL,
+        staff_notified JSONB,
+        created_at TIMESTAMP DEFAULT NOW(),
+        FOREIGN KEY (restaurant_id) REFERENCES restaurants(restaurant_id) ON DELETE CASCADE
+      )
+    `);
+    console.log('✅ Notification log table initialized');
  
+await pool.query(`
+      CREATE TABLE IF NOT EXISTS live_predictions (
+        id SERIAL PRIMARY KEY,
+        restaurant_id VARCHAR(100) NOT NULL,
+        prediction_type VARCHAR(50) NOT NULL,
+        prediction_time TIMESTAMP NOT NULL,
+        predicted_value DECIMAL(10,2),
+        confidence_score DECIMAL(5,4),
+        recommended_action TEXT,
+        actual_value DECIMAL(10,2),
+        accuracy_score DECIMAL(5,4),
+status VARCHAR(50),
+        created_at TIMESTAMP DEFAULT NOW(),
+        FOREIGN KEY (restaurant_id) REFERENCES restaurants(restaurant_id) ON DELETE CASCADE
+      )
+    `);
+    console.log('✅ Live predictions table initialized');
 
     // Create qr_codes table
     await pool.query(`
@@ -577,29 +629,52 @@ async function createNotificationTables() {
 // ======================================================
 // ENSURE DEMO DATA EXISTS
 // ======================================================
-
 async function ensureDemoData() {
   try {
-    // Create demo restaurant for testing
-    await pool.query(
-      'INSERT INTO restaurants (restaurant_id, name) VALUES ($1, $2) ON CONFLICT (restaurant_id) DO NOTHING',
-      ['demo', 'Demo Restaurant']
-    );
-    
-    // Create a few more test restaurants
-    await pool.query(
-      'INSERT INTO restaurants (restaurant_id, name) VALUES ($1, $2) ON CONFLICT (restaurant_id) DO NOTHING',
-      ['testrestaurant', 'Test Restaurant']
-    );
-    
-    await pool.query(
-      'INSERT INTO restaurants (restaurant_id, name) VALUES ($1, $2) ON CONFLICT (restaurant_id) DO NOTHING',
-      ['mariositalian', 'Marios Italian Kitchen']
-    );
-    
-    console.log('Demo restaurant data ensured');
+    await pool.query(`
+      INSERT INTO restaurants (restaurant_id, name)
+      VALUES ('demo-restaurant', 'Demo Restaurant')
+      ON CONFLICT (restaurant_id) DO NOTHING
+    `);
+    console.log('✅ Demo restaurant data inserted');
+
+    await pool.query(`
+      INSERT INTO users (email, password_hash, full_name, company_name, restaurant_id)
+      VALUES ('test@example.com', 'hashedpassword', 'Test User', 'Demo Company', 'demo-restaurant')
+      ON CONFLICT (email) DO NOTHING
+    `);
+    console.log('✅ Demo user data inserted');
+
+    await pool.query(`
+      INSERT INTO push_subscriptions (restaurant_id, staff_name, staff_type, subscription_data)
+      VALUES ('demo-restaurant', 'Staff One', 'waiter', '{}')
+      ON CONFLICT DO NOTHING
+    `);
+    console.log('✅ Demo push subscription inserted');
+
+    await pool.query(`
+      INSERT INTO notification_log (alert_id, restaurant_id, table_number, notification_type, status, staff_notified)
+      VALUES ('demo-alert', 'demo-restaurant', 1, 'push', 'sent', '{}')
+      ON CONFLICT DO NOTHING
+    `);
+    console.log('✅ Demo notification log inserted');
+
+    await pool.query(`
+      INSERT INTO live_predictions (restaurant_id, prediction_type, prediction_time, predicted_value, confidence_score, recommended_action, status)
+      VALUES ('demo-restaurant', 'table_turnover', NOW(), 30.5, 0.95, 'Optimize table assignments')
+      ON CONFLICT DO NOTHING
+    `);
+    console.log('✅ Demo live predictions inserted');
+
+    await pool.query(`
+      INSERT INTO qr_scans (restaurant_id, scan_timestamp, qr_type, table_number)
+      VALUES ('demo-restaurant', NOW(), 'menu', 1)
+      ON CONFLICT DO NOTHING
+    `);
+    console.log('✅ Demo QR scan inserted');
   } catch (error) {
-    console.error('Demo data creation failed:', error);
+    console.error('❌ Failed to ensure demo data:', error);
+    throw error;
   }
 }
 
@@ -638,11 +713,11 @@ async function ensureRestaurantExists(restaurantId, restaurantName = null) {
 
 async function sendNotificationToStaff(restaurantId, notificationData, targetStaffType = null) {
   try {
-    const staffQuery = targetStaffType ? 
-      `SELECT * FROM push_subscriptions 
-       WHERE restaurant_id = $1 AND is_active = true AND staff_type = $2` :
-      `SELECT * FROM push_subscriptions 
-       WHERE restaurant_id = $1 AND is_active = true`;
+    const staffQuery = targetStaffType
+      ? `SELECT * FROM push_subscriptions 
+         WHERE restaurant_id = $1 AND is_active = true AND staff_type = $2`
+      : `SELECT * FROM push_subscriptions 
+         WHERE restaurant_id = $1 AND is_active = true`;
     
     const params = targetStaffType ? [restaurantId, targetStaffType] : [restaurantId];
     const subscriptions = await pool.query(staffQuery, params);
@@ -680,9 +755,9 @@ async function sendNotificationToStaff(restaurantId, notificationData, targetSta
       } catch (error) {
         failed++;
         console.error(`❌ Push failed to ${sub.staff_name}:`, error.message);
-        
-        // SMS backup if available
-        
+        // TODO: Implement SMS backup if needed
+      }
+    }
 
     // Log notification attempt
     await pool.query(
@@ -700,7 +775,6 @@ async function sendNotificationToStaff(restaurantId, notificationData, targetSta
     );
 
     return { sent, failed, staffNotified };
-
   } catch (error) {
     console.error('Error sending notifications:', error);
     return { sent: 0, failed: 1, error: error.message };
