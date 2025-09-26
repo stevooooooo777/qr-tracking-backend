@@ -471,7 +471,7 @@ status VARCHAR(50),
         table_number INTEGER NOT NULL,
         alert_type VARCHAR(50) NOT NULL,
         message TEXT,
-        status VARCHAR(20) DEFAULT 'active',
+        
         created_at TIMESTAMP DEFAULT NOW(),
         FOREIGN KEY (restaurant_id) REFERENCES restaurants(restaurant_id) ON DELETE CASCADE
       )
@@ -515,7 +515,7 @@ status VARCHAR(50),
     `);
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_table_alerts_restaurant_status 
-      ON table_alerts(restaurant_id, status, created_at DESC)
+      ON table_alerts(restaurant_id, created_at DESC)
     `);
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_table_status_restaurant 
