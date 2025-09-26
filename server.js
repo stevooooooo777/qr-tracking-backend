@@ -41,22 +41,17 @@ app.use(express.json());
 
 // Postgres connection
 console.log('Creating database pool...');
-
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false,
-    ca: false
-  },
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
-});
+     connectionString: process.env.DATABASE_URL,
+     ssl: {
+       rejectUnauthorized: false
+     },
+     max: 20,
+     idleTimeoutMillis: 30000,
+     connectionTimeoutMillis: 2000,
+   });
 
-// Debug logs
-console.log('DATABASE_URL configured:', !!process.env.DATABASE_URL);
-console.log('DATABASE_URL ends with sslmode=require:', process.env.DATABASE_URL?.includes('sslmode=require'));
-console.log('Environment:', process.env.NODE_ENV);
+
 
 if (!databaseUrl) {
   console.error('DATABASE_URL is not set in environment variables!');
