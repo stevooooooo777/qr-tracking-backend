@@ -1442,24 +1442,53 @@ app.post('/api/predictions/:restaurantId/start', authenticateToken, async (req, 
 // 3D - ADD THESE API ENDPOINTS TO YOUR server.js
 
 // Get restaurant data
+// Enhanced restaurant endpoint with auto-demo data creation
 app.get('/api/restaurant/:restaurantId', async (req, res) => {
   try {
     const { restaurantId } = req.params;
     
-    const result = await pool.query(
+    let result = await pool.query(
       'SELECT * FROM restaurants WHERE restaurant_id = $1',
       [restaurantId]
     );
     
+    // If restaurant doesn't exist, create demo data automatically
+    if (result.rows.length === 0 && restaurantId === 'demo-restaurant') {
+      console.log('Creating demo restaurant data...');
+      
+      await pool.query(
+        'INSERT INTO restaurants (restaurant_id, name) VALUES ($1, $2)',
+        ['demo-restaurant', 'Demo Restaurant']
+      );
+      
+      // Create some demo scan data for live stats
+      const today = new Date();
+      const yesterday = new Date(today);
+      yesterday.setDate(yesterday.getDate() - 1);
+      
+      await pool.query(
+        'INSERT INTO qr_scans (restaurant_id, qr_type, table_number, scan_timestamp) VALUES ($1, $2, $3, $4)',
+        ['demo-restaurant', 'menu', 1, today]
+      );
+      
+      await pool.query(
+        'INSERT INTO qr_scans (restaurant_id, qr_type, table_number, scan_timestamp, actual_wait_time) VALUES ($1, $2, $3, $4, $5)',
+        ['demo-restaurant', 'service', 2, yesterday, 12]
+      );
+      
+      console.log('✅ Demo restaurant data created');
+      
+      // Fetch the newly created data
+      result = await pool.query(
+        'SELECT * FROM restaurants WHERE restaurant_id = $1',
+        ['demo-restaurant']
+      );
+    }
+    
     if (result.rows.length > 0) {
       res.json(result.rows[0]);
     } else {
-      // Return demo data if restaurant not found
-      res.json({
-        restaurant_id: restaurantId,
-        name: 'Demo Restaurant',
-        created_at: new Date().toISOString()
-      });
+      res.status(404).json({ error: 'Restaurant not found' });
     }
   } catch (error) {
     console.error('Error fetching restaurant:', error);
