@@ -477,10 +477,9 @@ status VARCHAR(50),
         id SERIAL PRIMARY KEY,
         restaurant_id VARCHAR(100) NOT NULL,
         table_number INTEGER NOT NULL,
-status VARCHAR(20) DEFAULT 'created' NOT NULL;
+status VARCHAR(20) DEFAULT 'created' NOT NULL,
         alert_type VARCHAR(50) NOT NULL,
-        message TEXT,
-        
+        message TEXT,        
         created_at TIMESTAMP DEFAULT NOW(),
         FOREIGN KEY (restaurant_id) REFERENCES restaurants(restaurant_id) ON DELETE CASCADE
       )
