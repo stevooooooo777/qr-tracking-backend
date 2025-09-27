@@ -1532,6 +1532,8 @@ app.get('/api/analytics/:restaurantId/avg-wait', async (req, res) => {
   }
 });
 
+
+
 // Track interaction analytics
 app.post('/api/analytics/interaction', async (req, res) => {
   try {
