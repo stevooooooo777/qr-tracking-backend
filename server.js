@@ -1438,6 +1438,116 @@ app.post('/api/predictions/:restaurantId/start', authenticateToken, async (req, 
   }
 });
 
+
+// 3D - ADD THESE API ENDPOINTS TO YOUR server.js
+
+// Get restaurant data
+app.get('/api/restaurant/:restaurantId', async (req, res) => {
+  try {
+    const { restaurantId } = req.params;
+    
+    const result = await pool.query(
+      'SELECT * FROM restaurants WHERE restaurant_id = $1',
+      [restaurantId]
+    );
+    
+    if (result.rows.length > 0) {
+      res.json(result.rows[0]);
+    } else {
+      // Return demo data if restaurant not found
+      res.json({
+        restaurant_id: restaurantId,
+        name: 'Demo Restaurant',
+        created_at: new Date().toISOString()
+      });
+    }
+  } catch (error) {
+    console.error('Error fetching restaurant:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get today's scan count
+app.get('/api/analytics/:restaurantId/scans-today', async (req, res) => {
+  try {
+    const { restaurantId } = req.params;
+    const today = new Date().toISOString().split('T')[0];
+    
+    const result = await pool.query(
+      'SELECT COUNT(*) as count FROM qr_scans WHERE restaurant_id = $1 AND DATE(scan_timestamp) = $2',
+      [restaurantId, today]
+    );
+    
+    res.json({ count: parseInt(result.rows[0].count) || 0 });
+  } catch (error) {
+    console.error('Error fetching scan count:', error);
+    res.json({ count: 0 });
+  }
+});
+
+// Get average wait time
+app.get('/api/analytics/:restaurantId/avg-wait', async (req, res) => {
+  try {
+    const { restaurantId } = req.params;
+    
+    const result = await pool.query(
+      'SELECT AVG(actual_wait_time) as avg_wait FROM qr_scans WHERE restaurant_id = $1 AND actual_wait_time IS NOT NULL',
+      [restaurantId]
+    );
+    
+    const avgWait = result.rows[0].avg_wait;
+    res.json({ minutes: avgWait ? Math.round(avgWait) : 15 });
+  } catch (error) {
+    console.error('Error fetching avg wait:', error);
+    res.json({ minutes: 15 });
+  }
+});
+
+// Track interaction analytics
+app.post('/api/analytics/interaction', async (req, res) => {
+  try {
+    const { restaurant_id, table_number, interaction_type, qr_type, timestamp } = req.body;
+    
+    await pool.query(
+      'INSERT INTO table_activities (restaurant_id, table_number, qr_type, activity_data, created_at) VALUES ($1, $2, $3, $4, $5)',
+      [restaurant_id, table_number, qr_type, JSON.stringify({ interaction_type, timestamp }), new Date()]
+    );
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error tracking interaction:', error);
+    res.status(500).json({ error: 'Failed to track interaction' });
+  }
+});
+
+// Generate QR codes for 3D experience
+app.post('/api/qr/generate', async (req, res) => {
+  try {
+    const { restaurant_id, qr_type, table_number, destination_url } = req.body;
+    
+    // Create tracking URL
+    const trackingUrl = `${req.protocol}://${req.get('host')}/qr/${restaurant_id}/table/${table_number}/${qr_type}`;
+    
+    // Store in database
+    await pool.query(
+      'INSERT INTO qr_codes (restaurant_id, qr_type, tracking_url, destination_url, table_number) VALUES ($1, $2, $3, $4, $5)',
+      [restaurant_id, qr_type, trackingUrl, destination_url, table_number]
+    );
+    
+    res.json({
+      tracking_url: trackingUrl,
+      destination_url: destination_url,
+      qr_type: qr_type
+    });
+  } catch (error) {
+    console.error('Error generating QR code:', error);
+    res.status(500).json({ error: 'Failed to generate QR code' });
+  }
+});
+
+
+
+
 // ======================================================
 // ANALYTICS API (ENHANCED WITH PREDICTIONS)
 // ======================================================
