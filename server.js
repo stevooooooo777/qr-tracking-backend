@@ -264,14 +264,16 @@ app.get('/api/health', (req, res) => {
 // DATABASE INITIALIZATION WITH PREDICTIVE ANALYTICS
 // ======================================================
 
-await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
-await pool.query('CREATE SCHEMA public');
-
-
-
 async function initializeDatabase() {
   try {
-    // Test database connection
+    
+// ADD THESE LINES AT THE VERY START
+    console.log('Resetting database schema...');
+    await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
+    await pool.query('CREATE SCHEMA public');
+    console.log('✅ Database schema reset complete');
+
+// Test database connection
     const client = await pool.connect();
     console.log('Database connected successfully');
     client.release();
