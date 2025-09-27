@@ -263,6 +263,12 @@ app.get('/api/health', (req, res) => {
 
 // DATABASE INITIALIZATION WITH PREDICTIVE ANALYTICS
 // ======================================================
+
+await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
+await pool.query('CREATE SCHEMA public');
+
+
+
 async function initializeDatabase() {
   try {
     // Test database connection
@@ -469,7 +475,7 @@ status VARCHAR(50),
         id SERIAL PRIMARY KEY,
         restaurant_id VARCHAR(100) NOT NULL,
         table_number INTEGER NOT NULL,
-status VARCHAR(50) NOT NULL,
+status VARCHAR(20) DEFAULT 'created' NOT NULL;
         alert_type VARCHAR(50) NOT NULL,
         message TEXT,
         
