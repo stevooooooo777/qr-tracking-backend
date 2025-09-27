@@ -605,41 +605,42 @@ async function ensureDemoData() {
       ON CONFLICT (restaurant_id) DO NOTHING
     `);
     console.log('✅ Demo restaurant data inserted');
-
+    
     await pool.query(`
       INSERT INTO users (email, password_hash, full_name, company_name, restaurant_id)
       VALUES ('test@example.com', 'hashedpassword', 'Test User', 'Demo Company', 'demo-restaurant')
       ON CONFLICT (email) DO NOTHING
     `);
     console.log('✅ Demo user data inserted');
-
+    
     await pool.query(`
       INSERT INTO push_subscriptions (restaurant_id, staff_name, staff_type, subscription_data)
       VALUES ('demo-restaurant', 'Staff One', 'waiter', '{}')
       ON CONFLICT DO NOTHING
     `);
     console.log('✅ Demo push subscription inserted');
-
+    
     await pool.query(`
       INSERT INTO notification_log (alert_id, restaurant_id, table_number, notification_type, status, staff_notified)
       VALUES ('demo-alert', 'demo-restaurant', 1, 'push', 'sent', '{}')
       ON CONFLICT DO NOTHING
     `);
     console.log('✅ Demo notification log inserted');
-
+    
     await pool.query(`
       INSERT INTO live_predictions (restaurant_id, prediction_type, prediction_time, predicted_value, confidence_score, recommended_action, status)
-      VALUES ('demo-restaurant', 'table_turnover', NOW(), 30.5, 0.95, 'Optimize table assignments')
+      VALUES ('demo-restaurant', 'table_turnover', NOW(), 30.5, 0.95, 'Optimize table assignments', 'active')
       ON CONFLICT DO NOTHING
     `);
     console.log('✅ Demo live predictions inserted');
-
+    
     await pool.query(`
       INSERT INTO qr_scans (restaurant_id, scan_timestamp, qr_type, table_number)
       VALUES ('demo-restaurant', NOW(), 'menu', 1)
       ON CONFLICT DO NOTHING
     `);
     console.log('✅ Demo QR scan inserted');
+    
   } catch (error) {
     console.error('❌ Failed to ensure demo data:', error);
     throw error;
