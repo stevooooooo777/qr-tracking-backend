@@ -1534,6 +1534,10 @@ app.get('/api/analytics/:restaurantId/avg-wait', async (req, res) => {
 
 
 
+
+
+
+
 // Track interaction analytics
 app.post('/api/analytics/interaction', async (req, res) => {
   try {
@@ -1573,6 +1577,41 @@ app.post('/api/qr/generate', async (req, res) => {
   } catch (error) {
     console.error('Error generating QR code:', error);
     res.status(500).json({ error: 'Failed to generate QR code' });
+  }
+});
+
+
+// Service alert endpoint
+app.post('/api/service/alert', async (req, res) => {
+  try {
+    const { restaurant_id, table_number, request_type, message, priority } = req.body;
+    
+    await pool.query(
+      'INSERT INTO service_alerts (alert_id, restaurant_id, table_number, alert_type, message, priority, created_at) VALUES ($1, $2, $3, $4, $5, $6, NOW())',
+      [Date.now().toString(), restaurant_id, table_number, request_type, message, priority || 'normal']
+    );
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Service alert error:', error);
+    res.status(500).json({ error: 'Failed to create alert' });
+  }
+});
+
+// Analytics interaction endpoint  
+app.post('/api/analytics/interaction', async (req, res) => {
+  try {
+    const { restaurant_id, table_number, interaction_type, qr_type } = req.body;
+    
+    await pool.query(
+      'INSERT INTO table_activities (restaurant_id, table_number, qr_type, activity_data, created_at) VALUES ($1, $2, $3, $4, NOW())',
+      [restaurant_id, table_number, qr_type, JSON.stringify({ interaction_type })]
+    );
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Analytics error:', error);
+    res.status(500).json({ error: 'Failed to track interaction' });
   }
 });
 
