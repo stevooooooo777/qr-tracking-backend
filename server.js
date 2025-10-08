@@ -23,6 +23,7 @@ console.log('Starting server initialization...');
 console.log('Creating Express app...');
 const app = express();
 
+// Updated CORS
 // Middleware - CORS first
 console.log('Setting up middleware...');
 app.use(cors({
