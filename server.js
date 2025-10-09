@@ -36,12 +36,26 @@ app.use(cors({
 // ======================================================
 // HEALTH CHECK (SINGLE ENDPOINT ONLY)
 // ======================================================
+// ======================================================
+// SIMPLE HEALTH CHECK FOR RAILWAY (no database)
+// ======================================================
+app.get('/api/health', (req, res) => {
+  console.log('[HEALTH] Simple health check - responding immediately');
+  res.status(200).json({ 
+    status: 'healthy',
+    timestamp: new Date().toISOString() 
+  });
+});
 
-app.get('/api/health', async (req, res) => {
-  console.log('[HEALTH] Health check called');
+// ======================================================
+// DETAILED HEALTH CHECK WITH DATABASE (for monitoring)
+// ======================================================
+app.get('/api/health/detailed', async (req, res) => {
+  console.log('[HEALTH] Detailed health check with database');
   try {
     const result = await pool.query('SELECT NOW()');
     const dbTime = result.rows[0].now;
+    console.log('[HEALTH] Database query successful');
     
     res.status(200).json({
       status: 'healthy',
@@ -50,15 +64,19 @@ app.get('/api/health', async (req, res) => {
       dbTime: dbTime.toISOString()
     });
   } catch (error) {
-    console.error('[HEALTH] Database issue:', error.message);
+    console.error('[HEALTH] Database error:', error.message);
     res.status(200).json({
-      status: 'running',
+      status: 'degraded',
       timestamp: new Date().toISOString(),
-      database: 'disconnected',
+      database: 'error',
       error: error.message
     });
   }
 });
+
+
+
+
 
 app.use(helmet());
 // Log every request
