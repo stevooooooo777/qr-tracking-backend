@@ -40,12 +40,20 @@ app.use(cors({
 // SIMPLE HEALTH CHECK FOR RAILWAY (no database)
 // ======================================================
 app.get('/api/health', (req, res) => {
-  console.log('[HEALTH] Simple health check - responding immediately');
+  console.log('[HEALTH] Health check called from:', req.ip);
+  console.log('[HEALTH] Sending 200 response...');
+  
   res.status(200).json({ 
     status: 'healthy',
     timestamp: new Date().toISOString() 
   });
+  
+  console.log('[HEALTH] Response sent successfully');
 });
+
+
+
+
 
 // ======================================================
 // DETAILED HEALTH CHECK WITH DATABASE (for monitoring)
