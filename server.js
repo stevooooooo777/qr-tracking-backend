@@ -33,7 +33,15 @@ app.use(cors({
   credentials: true
 }));
 
-app.use(cors({...}));
+
+app.use(helmet());
+// Log every request
+app.use((req, res, next) => {
+  console.log(`${req.method} ${req.url}`); // Optional logging
+  next();
+});
+
+
 
 // Root path health check
 app.get('/', (req, res) => {
@@ -85,17 +93,6 @@ app.get('/api/health/detailed', async (req, res) => {
       error: error.message
     });
   }
-});
-
-
-
-
-
-app.use(helmet());
-// Log every request
-app.use((req, res, next) => {
-  console.log(`${req.method} ${req.url}`); // Optional logging
-  next();
 });
 
 
