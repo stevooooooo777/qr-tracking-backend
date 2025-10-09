@@ -33,24 +33,15 @@ app.use(cors({
   credentials: true
 }));
 
-// ======================================================
-// HEALTH CHECK (SINGLE ENDPOINT ONLY)
-// ======================================================
-// ======================================================
 // SIMPLE HEALTH CHECK FOR RAILWAY (no database)
-// ======================================================
 app.get('/api/health', (req, res) => {
   console.log('[HEALTH] Health check called from:', req.ip);
-  console.log('[HEALTH] Sending 200 response...');
+  console.log('[HEALTH] Sending plain text OK...');
   
-  res.status(200).json({ 
-    status: 'healthy',
-    timestamp: new Date().toISOString() 
-  });
+  res.status(200).send('OK');  // Plain text instead of JSON
   
   console.log('[HEALTH] Response sent successfully');
 });
-
 
 
 
