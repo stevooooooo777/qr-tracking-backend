@@ -33,6 +33,20 @@ app.use(cors({
   credentials: true
 }));
 
+app.use(cors({...}));
+
+// Root path health check
+app.get('/', (req, res) => {
+  console.log('[HEALTH] Root path checked');
+  res.status(200).send('OK');
+});
+
+app.get('/api/health', (req, res) => {
+  console.log('[HEALTH] /api/health called from:', req.ip);
+  res.status(200).send('OK');
+});
+
+
 // SIMPLE HEALTH CHECK FOR RAILWAY (no database)
 app.get('/api/health', (req, res) => {
   console.log('[HEALTH] Health check called from:', req.ip);
