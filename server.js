@@ -57,14 +57,15 @@ app.get('/api/health', (req, res) => {
 
 // SIMPLE HEALTH CHECK FOR RAILWAY (no database)
 app.get('/api/health', (req, res) => {
-  console.log('[HEALTH] Health check called from:', req.ip);
-  console.log('[HEALTH] Sending plain text OK...');
+  console.log('[HEALTH] /api/health called from:', req.ip);
   
-  res.status(200).send('OK');  // Plain text instead of JSON
+  res.setHeader('Content-Type', 'text/plain');
+  res.setHeader('Content-Length', '2');
+  res.writeHead(200);
+  res.end('OK');
   
-  console.log('[HEALTH] Response sent successfully');
+  console.log('[HEALTH] Response sent');
 });
-
 
 
 
