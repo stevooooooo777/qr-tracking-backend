@@ -49,10 +49,6 @@ app.get('/', (req, res) => {
   res.status(200).send('OK');
 });
 
-app.get('/api/health', (req, res) => {
-  console.log('[HEALTH] /api/health called from:', req.ip);
-  res.status(200).send('OK');
-});
 
 
 // SIMPLE HEALTH CHECK FOR RAILWAY (no database)
