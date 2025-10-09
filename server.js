@@ -159,6 +159,7 @@ pool.on('error', (err) => {
 
 
 // User Registration
+// User Registration
 app.post('/api/register', async (req, res) => {
   try {
     const schema = Joi.object({
@@ -178,7 +179,7 @@ app.post('/api/register', async (req, res) => {
 
     await ensureRestaurantExists(restaurant_id);
     const result = await pool.query(
-      'INSERT INTO users (email, password_hash, full_name, company_name, restaurant_id) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+      'INSERT INTO users (email, password_hash, full_name, company_name, restaurant_id, venue_setup_complete) VALUES ($1, $2, $3, $4, $5, FALSE) RETURNING id',
       [email, password_hash, full_name, company_name, restaurant_id]
     );
 
@@ -192,7 +193,7 @@ app.post('/api/register', async (req, res) => {
   }
 });
 
-
+// User Login
 // User Login
 app.post('/api/login', async (req, res) => {
   try {
@@ -220,12 +221,19 @@ app.post('/api/login', async (req, res) => {
 
     await pool.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
 
-    res.json({ success: true, token, restaurant_id: user.restaurant_id, restaurant_name: user.company_name });
+    res.json({
+      success: true,
+      token,
+      restaurant_id: user.restaurant_id,
+      restaurant_name: user.company_name,
+      needsSetup: !user.venue_setup_complete // New field
+    });
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ error: 'Failed to login' });
   }
 });
+
 
 app.use(express.json({ limit: '10mb' }));
 
@@ -2212,10 +2220,10 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // Token Verification
+// Token Verification
 app.post('/api/auth/verify', async (req, res) => {
   try {
     const { token } = req.body;
-
     if (!token) {
       return res.status(400).json({
         success: false,
@@ -2224,7 +2232,6 @@ app.post('/api/auth/verify', async (req, res) => {
     }
 
     const decoded = verifyToken(token);
-    
     if (!decoded) {
       return res.status(401).json({
         success: false,
@@ -2232,13 +2239,10 @@ app.post('/api/auth/verify', async (req, res) => {
       });
     }
 
-    // Get fresh user data
-    const userResult = await pool.query(`
-      SELECT id, email, full_name, company_name, restaurant_id
-      FROM users 
-      WHERE id = $1
-    `, [decoded.id]);
-
+    const userResult = await pool.query(
+      `SELECT id, email, full_name, company_name, restaurant_id, venue_setup_complete FROM users WHERE id = $1`,
+      [decoded.id]
+    );
     if (userResult.rows.length === 0) {
       return res.status(401).json({
         success: false,
@@ -2247,7 +2251,6 @@ app.post('/api/auth/verify', async (req, res) => {
     }
 
     const user = userResult.rows[0];
-
     res.json({
       success: true,
       message: 'Token is valid',
@@ -2256,10 +2259,10 @@ app.post('/api/auth/verify', async (req, res) => {
         email: user.email,
         name: user.full_name,
         companyName: user.company_name,
-        restaurantId: user.restaurant_id
+        restaurantId: user.restaurant_id,
+        needsSetup: !user.venue_setup_complete
       }
     });
-
   } catch (error) {
     console.error('Token verification error:', error);
     res.status(500).json({
@@ -2269,9 +2272,61 @@ app.post('/api/auth/verify', async (req, res) => {
   }
 });
 
+// Venue Setup
+app.post('/api/venue/setup', authenticateToken, async (req, res) => {
+  try {
+    const { restaurant_id, setup_data, completed_at } = req.body;
+    if (!restaurant_id || !setup_data) {
+      return res.status(400).json({ success: false, message: 'Missing required fields' });
+    }
 
+    const userResult = await pool.query(
+      'SELECT id FROM users WHERE restaurant_id = $1',
+      [restaurant_id]
+    );
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
 
+    await pool.query(
+      `UPDATE users SET venue_setup_complete = TRUE, setup_data = $1, updated_at = $2 WHERE restaurant_id = $3`,
+      [JSON.stringify(setup_data), new Date(completed_at), restaurant_id]
+    );
 
+    res.json({ success: true, message: 'Venue setup completed' });
+  } catch (error) {
+    console.error('Venue setup error:', error);
+    res.status(500).json({ success: false, message: 'Failed to save venue setup' });
+  }
+});
+
+// Venue Setup
+app.post('/api/venue/setup', authenticateToken, async (req, res) => {
+  try {
+    const { restaurant_id, setup_data, completed_at } = req.body;
+    if (!restaurant_id || !setup_data) {
+      return res.status(400).json({ success: false, message: 'Missing required fields' });
+    }
+
+    const userResult = await pool.query(
+      'SELECT id FROM users WHERE restaurant_id = $1',
+      [restaurant_id]
+    );
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    await pool.query(
+      `UPDATE users SET venue_setup_complete = TRUE, setup_data = $1, updated_at = $2 WHERE restaurant_id = $3`,
+      [JSON.stringify(setup_data), new Date(completed_at), restaurant_id]
+    );
+
+    res.json({ success: true, message: 'Venue setup completed' });
+  } catch (error) {
+    console.error('Venue setup error:', error);
+    res.status(500).json({ success: false, message: 'Failed to save venue setup' });
+  }
+});
 
 // ======================================================
 // HELPER FUNCTIONS
