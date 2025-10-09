@@ -32,12 +32,42 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
 }));
+
+// ======================================================
+// HEALTH CHECK (SINGLE ENDPOINT ONLY)
+// ======================================================
+
+app.get('/api/health', async (req, res) => {
+  console.log('[HEALTH] Health check called');
+  try {
+    const result = await pool.query('SELECT NOW()');
+    const dbTime = result.rows[0].now;
+    
+    res.status(200).json({
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      database: 'connected',
+      dbTime: dbTime.toISOString()
+    });
+  } catch (error) {
+    console.error('[HEALTH] Database issue:', error.message);
+    res.status(200).json({
+      status: 'running',
+      timestamp: new Date().toISOString(),
+      database: 'disconnected',
+      error: error.message
+    });
+  }
+});
+
 app.use(helmet());
 // Log every request
 app.use((req, res, next) => {
   console.log(`${req.method} ${req.url}`); // Optional logging
   next();
 });
+
+
 app.use(express.json());
 
 // Postgres connection
@@ -98,38 +128,10 @@ pool.on('error', (err) => {
   // Don't exit - keep server alive
 });
 
-// SIMPLE HEALTH CHECK FIRST - no DB
-console.log('Setting up health endpoints...');
-app.get('/api/health', (req, res) => {
-  console.log('[HEALTH] Simple /api/health called - OK');
-  res.status(200).send('OK');
-});
 
-// Enhanced health check (with DB test)
-app.get('/api/health', async (req, res) => {
-  console.log('[HEALTH] Detailed /api/health called');
-  try {
-    const result = await pool.query('SELECT NOW()');
-    const dbTime = result.rows[0].now;
-    console.log(`[HEALTH] Health check passed - DB time: ${dbTime}`);
-    
-    res.status(200).json({
-      status: 'Server is healthy',
-      timestamp: new Date().toISOString(),
-      dbConnected: true,
-      dbTime: dbTime.toISOString()
-    });
-  } catch (error) {
-    console.error('[HEALTH] Health check failed:', error.message);
-    // Always return 200 to keep container alive
-    res.status(200).json({
-      status: 'Server running but DB issue',
-      timestamp: new Date().toISOString(),
-      dbConnected: false,
-      error: error.message
-    });
-  }
-});
+  
+
+
 
 // User Registration
 app.post('/api/register', async (req, res) => {
@@ -254,12 +256,8 @@ try {
 
 // ======================================================
 // PUSH NOTIFICATION SETUP
-// ======================================================
 
-// Health check endpoint (required for Railway)
-app.get('/api/health', (req, res) => {
-  res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
-});
+
 
 
 // DATABASE INITIALIZATION WITH PREDICTIVE ANALYTICS
