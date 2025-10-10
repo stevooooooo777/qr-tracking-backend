@@ -2088,9 +2088,9 @@ function verifyToken(token) {
 // User Registration
 app.post('/api/auth/register', async (req, res) => {
   try {
-    const { companyName, restaurantId, fullName, email, password } = req.body;
+    const { restaurantName, restaurantId, fullName, email, password } = req.body;
 
-    if (!companyName || !restaurantId || !fullName || !email || !password) {
+    if (!restaurantName || !restaurantId || !fullName || !email || !password) {
       return res.status(400).json({
         success: false,
         message: 'All fields are required'
@@ -2118,7 +2118,7 @@ app.post('/api/auth/register', async (req, res) => {
     }
 
     // Ensure restaurant exists
-    await ensureRestaurantExists(restaurantId, companyName);
+    await ensureRestaurantExists(restaurantId, restaurantName);
 
     // Hash password
     const passwordHash = await bcrypt.hash(password, 12);
@@ -2128,7 +2128,7 @@ app.post('/api/auth/register', async (req, res) => {
       INSERT INTO users (email, password_hash, full_name, company_name, restaurant_id)
       VALUES ($1, $2, $3, $4, $5)
       RETURNING id, email, full_name, company_name, restaurant_id, created_at
-    `, [email.toLowerCase(), passwordHash, fullName, companyName, restaurantId]);
+    `, [email.toLowerCase(), passwordHash, fullName, restaurantName, restaurantId]);
 
     const user = userResult.rows[0];
     const token = generateToken(user);
@@ -2141,7 +2141,7 @@ app.post('/api/auth/register', async (req, res) => {
         id: user.id,
         email: user.email,
         name: user.full_name,
-        companyName: user.company_name,
+        restaurantName: user.company_name,
         restaurantId: user.restaurant_id
       }
     });
@@ -2203,7 +2203,7 @@ app.post('/api/auth/login', async (req, res) => {
         id: user.id,
         email: user.email,
         name: user.full_name,
-        companyName: user.company_name,
+        restaurantName: user.company_name,
         restaurantId: user.restaurant_id
       }
     });
@@ -2256,7 +2256,7 @@ app.post('/api/auth/verify', async (req, res) => {
         id: user.id,
         email: user.email,
         name: user.full_name,
-        companyName: user.company_name,
+        restaurantName: user.company_name,
         restaurantId: user.restaurant_id,
         needsSetup: !user.venue_setup_complete
       }
