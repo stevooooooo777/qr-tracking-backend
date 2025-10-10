@@ -41,7 +41,11 @@ app.use((req, res, next) => {
   next();
 });
 
-
+// LOG ALL INCOMING REQUESTS (including health checks)
+app.use((req, res, next) => {
+  console.log(`[REQUEST] ${req.method} ${req.url} from ${req.ip}`);
+  next();
+});
 
 // Root path health check
 app.get('/', (req, res) => {
