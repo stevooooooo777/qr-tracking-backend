@@ -59,10 +59,9 @@ app.get('/', (req, res) => {
 // ✅ NEW SIMPLIFIED VERSION:
 app.get('/api/health', (req, res) => {
   console.log('[HEALTH] /api/health called from:', req.ip);
-  res.status(200).send('OK');
+  res.status(200).json({ status: 'ok' });
   console.log('[HEALTH] Response sent');
 });
-
 
 // ======================================================
 // DETAILED HEALTH CHECK WITH DATABASE (for monitoring)
