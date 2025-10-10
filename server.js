@@ -2300,33 +2300,6 @@ app.post('/api/venue/setup', authenticateToken, async (req, res) => {
   }
 });
 
-// Venue Setup
-app.post('/api/venue/setup', authenticateToken, async (req, res) => {
-  try {
-    const { restaurant_id, setup_data, completed_at } = req.body;
-    if (!restaurant_id || !setup_data) {
-      return res.status(400).json({ success: false, message: 'Missing required fields' });
-    }
-
-    const userResult = await pool.query(
-      'SELECT id FROM users WHERE restaurant_id = $1',
-      [restaurant_id]
-    );
-    if (userResult.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
-    await pool.query(
-      `UPDATE users SET venue_setup_complete = TRUE, setup_data = $1, updated_at = $2 WHERE restaurant_id = $3`,
-      [JSON.stringify(setup_data), new Date(completed_at), restaurant_id]
-    );
-
-    res.json({ success: true, message: 'Venue setup completed' });
-  } catch (error) {
-    console.error('Venue setup error:', error);
-    res.status(500).json({ success: false, message: 'Failed to save venue setup' });
-  }
-});
 
 // ======================================================
 // HELPER FUNCTIONS
