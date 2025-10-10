@@ -56,17 +56,12 @@ app.get('/', (req, res) => {
 
 
 // SIMPLE HEALTH CHECK FOR RAILWAY (no database)
+// ✅ NEW SIMPLIFIED VERSION:
 app.get('/api/health', (req, res) => {
   console.log('[HEALTH] /api/health called from:', req.ip);
-  
-  res.setHeader('Content-Type', 'text/plain');
-  res.setHeader('Content-Length', '2');
-  res.writeHead(200);
-  res.end('OK');
-  
+  res.status(200).send('OK');
   console.log('[HEALTH] Response sent');
 });
-
 
 
 // ======================================================
