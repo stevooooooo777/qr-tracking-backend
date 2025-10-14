@@ -671,6 +671,59 @@ async function ensureDemoData() {
   }
 }
 
+
+
+
+
+// ======================================================
+// ONE-TIME DATABASE FIX - REMOVE AFTER FIRST RUN
+// ======================================================
+async function fixCardConfigurationsTable() {
+  try {
+    console.log('🔧 Checking card_configurations table...');
+    
+    // Check if constraint already exists
+    const constraintCheck = await pool.query(`
+      SELECT constraint_name 
+      FROM information_schema.table_constraints 
+      WHERE table_name = 'card_configurations' 
+      AND constraint_name = 'card_configurations_restaurant_id_unique'
+    `);
+    
+    if (constraintCheck.rows.length > 0) {
+      console.log('✅ Table constraints already fixed - skipping');
+      return;
+    }
+    
+    console.log('⚙️ Applying fixes to card_configurations table...');
+    
+    // Fix NOT NULL constraint
+    await pool.query(`
+      ALTER TABLE card_configurations 
+      ALTER COLUMN restaurant_id SET NOT NULL
+    `);
+    console.log('✅ restaurant_id set to NOT NULL');
+    
+    // Add UNIQUE constraint
+    await pool.query(`
+      ALTER TABLE card_configurations 
+      ADD CONSTRAINT card_configurations_restaurant_id_unique UNIQUE (restaurant_id)
+    `);
+    console.log('✅ UNIQUE constraint added to restaurant_id');
+    
+    console.log('🎉 card_configurations table fixed successfully!');
+    
+  } catch (error) {
+    console.error('❌ Error fixing card_configurations table:', error.message);
+    // Don't crash the server if this fails
+  }
+}
+
+
+
+
+
+
 // ======================================================
 // UTILITY FUNCTION: ENSURE RESTAURANT EXISTS
 // ======================================================
@@ -2997,6 +3050,232 @@ app.get('/api/staffing/:restaurantId', authenticateToken, async (req, res) => {
 
 
 
+
+// ============================================
+// NEW ROUTES FOR WELCOME DASHBOARD & CARD CUSTOMIZER
+// ============================================
+
+// Restaurant Profile Endpoint
+app.get('/api/restaurant/profile', authenticateToken, async (req, res) => {
+  try {
+    const restaurantId = req.user.restaurant_id || req.user.restaurantId;
+    
+    if (!restaurantId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Restaurant ID not found' 
+      });
+    }
+
+    const result = await pool.query(`
+      SELECT 
+        r.restaurant_id,
+        r.name as restaurant_name,
+        u.email,
+        u.full_name,
+        u.created_at
+      FROM restaurants r
+      LEFT JOIN users u ON r.restaurant_id = u.restaurant_id
+      WHERE r.restaurant_id = $1
+      LIMIT 1
+    `, [restaurantId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Restaurant not found' 
+      });
+    }
+
+    const restaurant = result.rows[0];
+
+    res.json({
+      success: true,
+      restaurant_name: restaurant.restaurant_name,
+      restaurant_id: restaurant.restaurant_id,
+      email: restaurant.email,
+      full_name: restaurant.full_name,
+      created_at: restaurant.created_at
+    });
+
+  } catch (error) {
+    console.error('Error fetching restaurant profile:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error fetching profile' 
+    });
+  }
+});
+
+// Card Configuration - Save
+app.post('/api/cards/configuration', authenticateToken, async (req, res) => {
+  try {
+    const restaurantId = req.user.restaurant_id || req.user.restaurantId;
+    const { selectedCards, configurations } = req.body;
+
+    if (!restaurantId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Restaurant ID not found' 
+      });
+    }
+
+    if (!Array.isArray(selectedCards)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'selectedCards must be an array' 
+      });
+    }
+
+    if (typeof configurations !== 'object') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'configurations must be an object' 
+      });
+    }
+
+    // Upsert the card configuration
+    const result = await pool.query(`
+      INSERT INTO card_configurations (restaurant_id, selected_cards, configurations)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (restaurant_id) 
+      DO UPDATE SET 
+        selected_cards = $2,
+        configurations = $3,
+        updated_at = CURRENT_TIMESTAMP
+      RETURNING *
+    `, [restaurantId, JSON.stringify(selectedCards), JSON.stringify(configurations)]);
+
+    res.json({
+      success: true,
+      message: 'Card configuration saved successfully',
+      data: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error('Error saving card configuration:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error saving configuration' 
+    });
+  }
+});
+
+// Card Configuration - Load
+app.get('/api/cards/configuration', authenticateToken, async (req, res) => {
+  try {
+    const restaurantId = req.user.restaurant_id || req.user.restaurantId;
+
+    if (!restaurantId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Restaurant ID not found' 
+      });
+    }
+
+    const result = await pool.query(`
+      SELECT 
+        selected_cards,
+        configurations,
+        created_at,
+        updated_at
+      FROM card_configurations 
+      WHERE restaurant_id = $1
+    `, [restaurantId]);
+
+    // If no configuration exists, return empty defaults
+    if (result.rows.length === 0) {
+      return res.json({
+        success: true,
+        selectedCards: [],
+        configurations: {},
+        message: 'No configuration found - using defaults'
+      });
+    }
+
+    const config = result.rows[0];
+
+    res.json({
+      success: true,
+      selectedCards: config.selected_cards,
+      configurations: config.configurations,
+      created_at: config.created_at,
+      updated_at: config.updated_at
+    });
+
+  } catch (error) {
+    console.error('Error loading card configuration:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error loading configuration' 
+    });
+  }
+});
+
+// Analytics Summary Endpoint
+app.get('/api/analytics/summary', authenticateToken, async (req, res) => {
+  try {
+    const restaurantId = req.user.restaurant_id || req.user.restaurantId;
+
+    if (!restaurantId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Restaurant ID not found' 
+      });
+    }
+
+    // Get total scans
+    const totalScansQuery = await pool.query(`
+      SELECT COUNT(*) as total_scans 
+      FROM qr_scans 
+      WHERE restaurant_id = $1
+    `, [restaurantId]);
+
+    // Get today's scans
+    const todayScansQuery = await pool.query(`
+      SELECT COUNT(*) as today_scans 
+      FROM qr_scans 
+      WHERE restaurant_id = $1 
+      AND DATE(scan_timestamp) = CURRENT_DATE
+    `, [restaurantId]);
+
+    // Count active cards from card_configurations
+    const activeCardsQuery = await pool.query(`
+      SELECT 
+        jsonb_array_length(selected_cards) as active_cards
+      FROM card_configurations 
+      WHERE restaurant_id = $1
+    `, [restaurantId]);
+
+    const totalScans = parseInt(totalScansQuery.rows[0]?.total_scans || 0);
+    const todayScans = parseInt(todayScansQuery.rows[0]?.today_scans || 0);
+    const activeCards = parseInt(activeCardsQuery.rows[0]?.active_cards || 0);
+
+    res.json({
+      success: true,
+      total_scans: totalScans,
+      today_scans: todayScans,
+      active_cards: activeCards,
+      restaurant_id: restaurantId
+    });
+
+  } catch (error) {
+    console.error('Error fetching analytics summary:', error);
+    
+    // Fail gracefully with defaults
+    res.json({
+      success: true,
+      total_scans: 0,
+      today_scans: 0,
+      active_cards: 0,
+      message: 'Analytics not available - showing defaults'
+    });
+  }
+});
+
+console.log('✅ New dashboard routes loaded');
+
+
 // ======================================================
 // ERROR HANDLING MIDDLEWARE
 // ======================================================
@@ -3020,6 +3299,11 @@ async function startServer() {
     console.log('Initializing database...');
     await initializeDatabase();
     console.log('✅ Database initialization complete');
+
+
+await fixCardConfigurationsTable(); // ← ADD THIS LINE
+
+
 
     await ensureDemoData(); // Ensure demo restaurants exist
     console.log('✅ Demo data ensured');
