@@ -341,7 +341,7 @@ console.log('✅ Users table initialized');
         qr_type VARCHAR(50) NOT NULL,
         tracking_url TEXT NOT NULL,
         destination_url TEXT NOT NULL,
-        table_number INTEGER,
+        table_number VARCHAR(50),
         created_at TIMESTAMP DEFAULT NOW(),
         FOREIGN KEY (restaurant_id) REFERENCES restaurants(restaurant_id) ON DELETE CASCADE
       )
@@ -354,7 +354,7 @@ console.log('✅ Users table initialized');
     restaurant_id VARCHAR(100) NOT NULL,
     qr_id INTEGER,
     qr_type VARCHAR(50) NOT NULL,
-    table_number INTEGER,
+    table_number VARCHAR(50),
     scan_timestamp TIMESTAMP DEFAULT NOW(),
     user_agent TEXT,
     ip_address INET,
