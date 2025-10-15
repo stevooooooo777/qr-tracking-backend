@@ -1,4 +1,4 @@
-// Database reset - Oct 15, 2025 - Changed table_number to VARCHAR(50)
+// Database reset
 
 require('dotenv').config();
 const express = require('express');
