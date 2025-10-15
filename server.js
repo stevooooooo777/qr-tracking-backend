@@ -1,3 +1,5 @@
+// Database reset - Oct 15, 2025 - Changed table_number to VARCHAR(50)
+
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -670,57 +672,6 @@ async function ensureDemoData() {
     throw error;
   }
 }
-
-
-
-
-
-// ======================================================
-// ONE-TIME DATABASE FIX - REMOVE AFTER FIRST RUN
-// ======================================================
-async function fixCardConfigurationsTable() {
-  try {
-    console.log('🔧 Checking card_configurations table...');
-    
-    // Check if constraint already exists
-    const constraintCheck = await pool.query(`
-      SELECT constraint_name 
-      FROM information_schema.table_constraints 
-      WHERE table_name = 'card_configurations' 
-      AND constraint_name = 'card_configurations_restaurant_id_unique'
-    `);
-    
-    if (constraintCheck.rows.length > 0) {
-      console.log('✅ Table constraints already fixed - skipping');
-      return;
-    }
-    
-    console.log('⚙️ Applying fixes to card_configurations table...');
-    
-    // Fix NOT NULL constraint
-    await pool.query(`
-      ALTER TABLE card_configurations 
-      ALTER COLUMN restaurant_id SET NOT NULL
-    `);
-    console.log('✅ restaurant_id set to NOT NULL');
-    
-    // Add UNIQUE constraint
-    await pool.query(`
-      ALTER TABLE card_configurations 
-      ADD CONSTRAINT card_configurations_restaurant_id_unique UNIQUE (restaurant_id)
-    `);
-    console.log('✅ UNIQUE constraint added to restaurant_id');
-    
-    console.log('🎉 card_configurations table fixed successfully!');
-    
-  } catch (error) {
-    console.error('❌ Error fixing card_configurations table:', error.message);
-    // Don't crash the server if this fails
-  }
-}
-
-
-
 
 
 
@@ -3299,11 +3250,6 @@ async function startServer() {
     console.log('Initializing database...');
     await initializeDatabase();
     console.log('✅ Database initialization complete');
-
-
-await fixCardConfigurationsTable(); // ← ADD THIS LINE
-
-
 
     await ensureDemoData(); // Ensure demo restaurants exist
     console.log('✅ Demo data ensured');
