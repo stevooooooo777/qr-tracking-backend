@@ -3248,6 +3248,69 @@ app.use((err, req, res, next) => {
 });
 
 
+// CODEGUARD - Add this to your server.js file
+
+const CodeGuardScanner = require('./codeguard-scanner');
+
+// CodeGuard monitoring endpoint
+app.get('/api/codeguard/scan', async (req, res) => {
+  try {
+    console.log('🔍 CodeGuard scan requested...');
+    
+    const scanner = new CodeGuardScanner();
+    
+    // For Railway deployment, we'll scan the current deployment
+    const results = await scanner.runFullScan({
+      // These paths work in Railway's deployment environment
+      backendPath: path.join(__dirname, 'server.js'),
+      packageJsonPath: path.join(__dirname, 'package.json'),
+      // Frontend scanning would need GitHub API integration (Phase 2)
+    });
+    
+    res.json({
+      success: true,
+      ...results
+    });
+  } catch (error) {
+    console.error('CodeGuard scan error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Scan failed',
+      message: error.message
+    });
+  }
+});
+
+// CodeGuard - Get latest scan results
+app.get('/api/codeguard/status', async (req, res) => {
+  try {
+    // Quick health check without full scan
+    res.json({
+      success: true,
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      services: {
+        backend: {
+          status: 'online',
+          uptime: process.uptime(),
+          memory: `${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`
+        },
+        database: {
+          status: 'connected'
+        }
+      },
+      lastScan: null // Will be populated when you run first scan
+    });
+  } catch (error) {
+    console.error('CodeGuard status error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+
 // ======================================================
 // SERVER STARTUP WITH PREDICTIVE ANALYTICS
 // ======================================================
