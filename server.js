@@ -8,6 +8,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const helmet = require('helmet');
 const Joi = require('joi');
+const path = require('path');
 
 const webpush = require('web-push')
 webpush.setVapidDetails(
