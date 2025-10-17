@@ -24,6 +24,7 @@ console.log('Starting server initialization...');
 // Create Express app
 console.log('Creating Express app...');
 const app = express();
+app.set('trust proxy', 1);
 
 // Updated CORS
 // Middleware - CORS first
@@ -222,12 +223,18 @@ app.post('/api/login', async (req, res) => {
     await pool.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
 
     res.json({
-      success: true,
-      token,
-      restaurant_id: user.restaurant_id,
-      restaurant_name: user.company_name,
-      needsSetup: !user.venue_setup_complete // New field
-    });
+  success: true,
+  token,
+  user: {
+    id: user.id,
+    email: user.email,
+    full_name: user.full_name,
+    restaurant_name: user.company_name,
+    restaurant_id: user.restaurant_id,
+    needsSetup: !user.venue_setup_complete
+  }
+});
+
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ error: 'Failed to login' });
