@@ -8,7 +8,11 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const helmet = require('helmet');
 const Joi = require('joi');
+const GitHubScanner = require('./github-scanner');
+const ClaudeAnalyzer = require('./claude-analyzer');
+const fs = require('fs').promises;
 const path = require('path');
+
 
 const webpush = require('web-push')
 webpush.setVapidDetails(
@@ -3249,61 +3253,152 @@ app.use((err, req, res, next) => {
 });
 
 
-// CODEGUARD - Add this to your server.js file
+// CODEGUARD Add these to your server.js file
 
-const CodeGuardScanner = require('./codeguard-scanner');
+const GitHubScanner = require('./github-scanner');
+const ClaudeAnalyzer = require('./claude-analyzer');
+const fs = require('fs').promises;
 
-// CodeGuard monitoring endpoint
+// Enhanced CodeGuard scan with GitHub + AI
 app.get('/api/codeguard/scan', async (req, res) => {
   try {
-    console.log('🔍 CodeGuard scan requested...');
+    console.log('🔍 CodeGuard Enhanced Scan initiated...');
     
-    const scanner = new CodeGuardScanner();
+    const results = {
+      timestamp: new Date().toISOString(),
+      status: 'completed',
+      checks: {},
+      summary: { critical: 0, warnings: 0, suggestions: 0 }
+    };
+
+    // 1. Health Check
+    results.checks.health = {
+      status: 'healthy',
+      services: {
+        backend: 'online',
+        database: 'connected',
+        memory: `${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`,
+        uptime: Math.round(process.uptime())
+      }
+    };
+
+    // 2. Scan Backend (Local)
+    console.log('📋 Scanning backend code...');
+    const backendContent = await fs.readFile(__filename, 'utf-8');
     
-    // For Railway deployment, we'll scan the current deployment
-    const results = await scanner.runFullScan({
-      // These paths work in Railway's deployment environment
-      backendPath: path.join(__dirname, 'server.js'),
-      packageJsonPath: path.join(__dirname, 'package.json'),
-      // Frontend scanning would need GitHub API integration (Phase 2)
-    });
+    // 3. Scan Frontend (GitHub)
+    console.log('🌐 Fetching frontend files from GitHub...');
     
-    res.json({
-      success: true,
-      ...results
-    });
+    // IMPORTANT: Replace these with YOUR GitHub repo details
+    const githubScanner = new GitHubScanner(
+      'stevooooooo777',  
+      'insane-marketing-frontend',
+      'main'
+    );
+
+    const frontendFiles = [
+      'login.html',
+      'welcome.html',
+      'venue-setup.html',
+      'config-client.js'
+    ];
+
+    const frontendScan = await githubScanner.scanFrontendFiles(frontendFiles);
+    
+    // 4. Compare Frontend vs Backend APIs
+    console.log('🔄 Comparing API consistency...');
+    const apiIssues = await githubScanner.compareWithBackend(
+      frontendScan.apiCalls,
+      backendContent
+    );
+
+    // Combine all issues
+    const allIssues = [
+      ...frontendScan.issues,
+      ...apiIssues
+    ];
+
+    results.checks.codeAnalysis = {
+      frontendFilesScanned: frontendScan.scannedFiles,
+      apiCallsFound: frontendScan.apiCalls.length,
+      issuesDetected: allIssues.length,
+      issues: allIssues
+    };
+
+    // 5. AI Analysis with Claude (if issues found)
+    if (allIssues.length > 0 && allIssues.length < 10) {
+      console.log('🤖 Running AI analysis...');
+      
+      const claudeAnalyzer = new ClaudeAnalyzer();
+      const aiEnhancedIssues = await claudeAnalyzer.analyzeIssues(
+        allIssues.slice(0, 5), // Analyze top 5 issues
+        null
+      );
+
+      results.checks.codeAnalysis.issues = aiEnhancedIssues;
+      results.checks.aiAnalysis = {
+        status: 'completed',
+        issuesAnalyzed: aiEnhancedIssues.length
+      };
+    }
+
+    // 6. Calculate Summary
+    for (const issue of allIssues) {
+      if (issue.severity === 'high') results.summary.critical++;
+      else if (issue.severity === 'medium') results.summary.warnings++;
+      else results.summary.suggestions++;
+    }
+
+    // 7. Health Score
+    const totalIssues = (results.summary.critical * 3) + 
+                       (results.summary.warnings * 2) + 
+                       results.summary.suggestions;
+    results.healthScore = Math.max(0, 100 - totalIssues * 5);
+
+    console.log('✅ Scan complete:', results.summary);
+    res.json({ success: true, ...results });
+
   } catch (error) {
-    console.error('CodeGuard scan error:', error);
+    console.error('❌ CodeGuard scan error:', error);
     res.status(500).json({
       success: false,
       error: 'Scan failed',
-      message: error.message
+      message: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
 
-// CodeGuard - Get latest scan results
-app.get('/api/codeguard/status', async (req, res) => {
+// Get AI-powered fix suggestion
+app.post('/api/codeguard/generate-fix', async (req, res) => {
   try {
-    // Quick health check without full scan
-    res.json({
-      success: true,
-      status: 'healthy',
-      timestamp: new Date().toISOString(),
-      services: {
-        backend: {
-          status: 'online',
-          uptime: process.uptime(),
-          memory: `${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`
-        },
-        database: {
-          status: 'connected'
-        }
-      },
-      lastScan: null // Will be populated when you run first scan
-    });
+    const { issue } = req.body;
+    
+    if (!issue) {
+      return res.status(400).json({
+        success: false,
+        error: 'Issue details required'
+      });
+    }
+
+    console.log('🔧 Generating auto-fix for:', issue.type);
+    
+    const claudeAnalyzer = new ClaudeAnalyzer();
+    const autoFix = await claudeAnalyzer.generateAutoFix(issue);
+
+    if (autoFix) {
+      res.json({
+        success: true,
+        fix: autoFix
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: 'Could not generate fix'
+      });
+    }
   } catch (error) {
-    console.error('CodeGuard status error:', error);
+    console.error('Fix generation error:', error);
     res.status(500).json({
       success: false,
       error: error.message
@@ -3311,6 +3406,40 @@ app.get('/api/codeguard/status', async (req, res) => {
   }
 });
 
+// Architecture analysis endpoint
+app.get('/api/codeguard/architecture', async (req, res) => {
+  try {
+    console.log('🏗️ Analyzing architecture...');
+    
+    const claudeAnalyzer = new ClaudeAnalyzer();
+    const analysis = await claudeAnalyzer.analyzeArchitecture(
+      [
+        { name: 'login.html' },
+        { name: 'welcome.html' },
+        { name: 'venue-setup.html' }
+      ],
+      'server.js'
+    );
+
+    if (analysis) {
+      res.json({
+        success: true,
+        ...analysis
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: 'Analysis failed'
+      });
+    }
+  } catch (error) {
+    console.error('Architecture analysis error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 
 // ======================================================
 // SERVER STARTUP WITH PREDICTIVE ANALYTICS
