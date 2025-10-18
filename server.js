@@ -3255,10 +3255,6 @@ app.use((err, req, res, next) => {
 
 // CODEGUARD Add these to your server.js file
 
-const GitHubScanner = require('./github-scanner');
-const ClaudeAnalyzer = require('./claude-analyzer');
-const fs = require('fs').promises;
-
 // Enhanced CodeGuard scan with GitHub + AI
 app.get('/api/codeguard/scan', async (req, res) => {
   try {
