@@ -80,11 +80,11 @@ class GitHubScanner {
       // Extract data access patterns
       const dataAccessRegex = /data\.([a-zA-Z_]+(?:\.[a-zA-Z_]+)*)/g;
       const accessedFields = new Set();
-      let fieldMatch;
-      
-      while ((fieldMatch = dataAccessRegex.exec(context)) !== null) {
-        accessedFields.push(fieldMatch[1]);
-      }
+let fieldMatch;
+
+while ((fieldMatch = dataAccessRegex.exec(context)) !== null) {
+  accessedFields.add(fieldMatch[1]);  
+}
 
       analysis.apiCalls.push({
         file: filename,
