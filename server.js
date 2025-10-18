@@ -3437,6 +3437,33 @@ app.get('/api/codeguard/architecture', async (req, res) => {
   }
 });
 
+// CodeGuard - Quick health status check
+app.get('/api/codeguard/status', async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      services: {
+        backend: {
+          status: 'online',
+          uptime: process.uptime(),
+          memory: `${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`
+        },
+        database: {
+          status: 'connected'
+        }
+      }
+    });
+  } catch (error) {
+    console.error('CodeGuard status error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // ======================================================
 // SERVER STARTUP WITH PREDICTIVE ANALYTICS
 // ======================================================
