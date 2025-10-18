@@ -3,9 +3,15 @@
 
 class ClaudeAnalyzer {
   constructor() {
-    // Claude API is available via fetch in your Railway environment
     this.apiUrl = 'https://api.anthropic.com/v1/messages';
     this.model = 'claude-sonnet-4-20250514';
+    this.apiKey = process.env.ANTHROPIC_API_KEY;
+    
+    if (!this.apiKey) {
+      console.error('❌ ANTHROPIC_API_KEY not set!');
+    } else {
+      console.log('✅ Claude API key loaded');
+    }
   }
 
   // Analyze code issues with AI
@@ -19,11 +25,13 @@ class ClaudeAnalyzer {
     const prompt = this.buildAnalysisPrompt(issues, codeContext);
     
     try {
-      const response = await fetch(this.apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+ const response = await fetch(this.apiUrl, {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'x-api-key': this.apiKey,
+    'anthropic-version': '2023-06-01'
+  },
         body: JSON.stringify({
           model: this.model,
           max_tokens: 2000,
@@ -159,11 +167,13 @@ Respond in JSON:
 }`;
 
     try {
-      const response = await fetch(this.apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+const response = await fetch(this.apiUrl, {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'x-api-key': this.apiKey,
+    'anthropic-version': '2023-06-01'
+  },
         body: JSON.stringify({
           model: this.model,
           max_tokens: 1000,
@@ -224,11 +234,13 @@ Respond in JSON:
 Be precise with the code - it will be applied automatically.`;
 
     try {
-      const response = await fetch(this.apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+const response = await fetch(this.apiUrl, {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'x-api-key': this.apiKey,
+    'anthropic-version': '2023-06-01'
+  },
         body: JSON.stringify({
           model: this.model,
           max_tokens: 1000,
