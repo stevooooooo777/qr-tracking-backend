@@ -2102,11 +2102,24 @@ function verifyToken(token) {
 }
 
 // User Registration
+// ============================================
+// ✅ FIXED AUTH ENDPOINTS - Correct field names
+// ============================================
+
+// User Registration
 app.post('/api/auth/register', async (req, res) => {
   try {
+    console.log('📝 Registration request:', {
+      email: req.body.email,
+      restaurantName: req.body.restaurantName,
+      hasPassword: !!req.body.password
+    });
+
     const { restaurantName, restaurantId, fullName, email, password } = req.body;
 
+    // Validate required fields
     if (!restaurantName || !restaurantId || !fullName || !email || !password) {
+      console.log('❌ Missing required fields');
       return res.status(400).json({
         success: false,
         message: 'All fields are required'
@@ -2114,6 +2127,7 @@ app.post('/api/auth/register', async (req, res) => {
     }
 
     if (password.length < 6) {
+      console.log('❌ Password too short');
       return res.status(400).json({
         success: false,
         message: 'Password must be at least 6 characters long'
@@ -2127,6 +2141,7 @@ app.post('/api/auth/register', async (req, res) => {
     );
 
     if (existingUser.rows.length > 0) {
+      console.log('❌ Email already exists:', email);
       return res.status(400).json({
         success: false,
         message: 'An account with this email already exists'
@@ -2134,21 +2149,42 @@ app.post('/api/auth/register', async (req, res) => {
     }
 
     // Ensure restaurant exists
+    console.log('🏢 Creating restaurant:', restaurantId);
     await ensureRestaurantExists(restaurantId, restaurantName);
 
     // Hash password
     const passwordHash = await bcrypt.hash(password, 12);
 
-    // Create user
-    const userResult = await pool.query(`
-      INSERT INTO users (email, password_hash, full_name, company_name, restaurant_id)
-      VALUES ($1, $2, $3, $4, $5)
-      RETURNING id, email, full_name, company_name, restaurant_id, created_at
-    `, [email.toLowerCase(), passwordHash, fullName, restaurantName, restaurantId]);
+    // Create user - TRY with venue_setup_complete, fallback without it
+    console.log('👤 Creating user...');
+    let userResult;
+    
+    try {
+      userResult = await pool.query(`
+        INSERT INTO users (email, password_hash, full_name, company_name, restaurant_id, venue_setup_complete)
+        VALUES ($1, $2, $3, $4, $5, FALSE)
+        RETURNING id, email, full_name, company_name, restaurant_id, created_at
+      `, [email.toLowerCase(), passwordHash, fullName, restaurantName, restaurantId]);
+    } catch (dbError) {
+      // If venue_setup_complete column doesn't exist, try without it
+      if (dbError.message.includes('venue_setup_complete')) {
+        console.log('⚠️ venue_setup_complete column not found, inserting without it');
+        userResult = await pool.query(`
+          INSERT INTO users (email, password_hash, full_name, company_name, restaurant_id)
+          VALUES ($1, $2, $3, $4, $5)
+          RETURNING id, email, full_name, company_name, restaurant_id, created_at
+        `, [email.toLowerCase(), passwordHash, fullName, restaurantName, restaurantId]);
+      } else {
+        throw dbError;
+      }
+    }
 
     const user = userResult.rows[0];
+    console.log('✅ User created:', user.id);
+
     const token = generateToken(user);
 
+    // ✅ CRITICAL FIX: Field names MUST match frontend exactly
     res.status(201).json({
       success: true,
       message: 'Account created successfully',
@@ -2156,17 +2192,21 @@ app.post('/api/auth/register', async (req, res) => {
       user: {
         id: user.id,
         email: user.email,
-        name: user.full_name,
-        restaurantName: user.company_name,
-        restaurantId: user.restaurant_id
+        full_name: user.full_name,           // ✅ NOT 'name'
+        restaurant_name: user.company_name,   // ✅ NOT 'restaurantName'
+        restaurant_id: user.restaurant_id,    // ✅ NOT 'restaurantId'
+        needsSetup: true
       }
     });
 
+    console.log('🎉 Registration successful:', email);
+
   } catch (error) {
-    console.error('Registration error:', error);
+    console.error('❌ Registration error:', error);
     res.status(500).json({
       success: false,
-      message: 'Registration failed. Please try again.'
+      message: 'Registration failed. Please try again.',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
@@ -2174,6 +2214,8 @@ app.post('/api/auth/register', async (req, res) => {
 // User Login
 app.post('/api/auth/login', async (req, res) => {
   try {
+    console.log('🔐 Login request:', req.body.email);
+
     const { email, password } = req.body;
 
     if (!email || !password) {
@@ -2183,14 +2225,29 @@ app.post('/api/auth/login', async (req, res) => {
       });
     }
 
-    // Find user
-    const userResult = await pool.query(`
-      SELECT id, email, password_hash, full_name, company_name, restaurant_id
-      FROM users 
-      WHERE email = $1
-    `, [email.toLowerCase()]);
+    // Find user - try with venue_setup_complete, fallback without
+    let userResult;
+    try {
+      userResult = await pool.query(`
+        SELECT id, email, password_hash, full_name, company_name, restaurant_id, venue_setup_complete
+        FROM users 
+        WHERE email = $1
+      `, [email.toLowerCase()]);
+    } catch (dbError) {
+      if (dbError.message.includes('venue_setup_complete')) {
+        console.log('⚠️ venue_setup_complete column not found, querying without it');
+        userResult = await pool.query(`
+          SELECT id, email, password_hash, full_name, company_name, restaurant_id
+          FROM users 
+          WHERE email = $1
+        `, [email.toLowerCase()]);
+      } else {
+        throw dbError;
+      }
+    }
 
     if (userResult.rows.length === 0) {
+      console.log('❌ User not found:', email);
       return res.status(401).json({
         success: false,
         message: 'Invalid email or password'
@@ -2203,6 +2260,7 @@ app.post('/api/auth/login', async (req, res) => {
     const passwordValid = await bcrypt.compare(password, user.password_hash);
     
     if (!passwordValid) {
+      console.log('❌ Invalid password for:', email);
       return res.status(401).json({
         success: false,
         message: 'Invalid email or password'
@@ -2211,6 +2269,7 @@ app.post('/api/auth/login', async (req, res) => {
 
     const token = generateToken(user);
 
+    // ✅ CRITICAL FIX: Field names MUST match frontend exactly
     res.json({
       success: true,
       message: 'Login successful',
@@ -2218,14 +2277,17 @@ app.post('/api/auth/login', async (req, res) => {
       user: {
         id: user.id,
         email: user.email,
-        name: user.full_name,
-        restaurantName: user.company_name,
-        restaurantId: user.restaurant_id
+        full_name: user.full_name,           // ✅ NOT 'name'
+        restaurant_name: user.company_name,   // ✅ NOT 'restaurantName'
+        restaurant_id: user.restaurant_id,    // ✅ NOT 'restaurantId'
+        needsSetup: user.venue_setup_complete === false || user.venue_setup_complete === undefined
       }
     });
 
+    console.log('✅ Login successful:', email);
+
   } catch (error) {
-    console.error('Login error:', error);
+    console.error('❌ Login error:', error);
     res.status(500).json({
       success: false,
       message: 'Login failed. Please try again.'
@@ -2234,10 +2296,10 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // Token Verification
-// Token Verification
 app.post('/api/auth/verify', async (req, res) => {
   try {
     const { token } = req.body;
+    
     if (!token) {
       return res.status(400).json({
         success: false,
@@ -2246,6 +2308,7 @@ app.post('/api/auth/verify', async (req, res) => {
     }
 
     const decoded = verifyToken(token);
+    
     if (!decoded) {
       return res.status(401).json({
         success: false,
@@ -2253,10 +2316,27 @@ app.post('/api/auth/verify', async (req, res) => {
       });
     }
 
-    const userResult = await pool.query(
-      `SELECT id, email, full_name, company_name, restaurant_id, venue_setup_complete FROM users WHERE id = $1`,
-      [decoded.id]
-    );
+    // Find user - try with venue_setup_complete, fallback without
+    let userResult;
+    try {
+      userResult = await pool.query(`
+        SELECT id, email, full_name, company_name, restaurant_id, venue_setup_complete 
+        FROM users 
+        WHERE id = $1
+      `, [decoded.id]);
+    } catch (dbError) {
+      if (dbError.message.includes('venue_setup_complete')) {
+        console.log('⚠️ venue_setup_complete column not found, querying without it');
+        userResult = await pool.query(`
+          SELECT id, email, full_name, company_name, restaurant_id 
+          FROM users 
+          WHERE id = $1
+        `, [decoded.id]);
+      } else {
+        throw dbError;
+      }
+    }
+
     if (userResult.rows.length === 0) {
       return res.status(401).json({
         success: false,
@@ -2265,26 +2345,32 @@ app.post('/api/auth/verify', async (req, res) => {
     }
 
     const user = userResult.rows[0];
+
+    // ✅ CRITICAL FIX: Field names MUST match frontend exactly
     res.json({
       success: true,
       message: 'Token is valid',
       user: {
         id: user.id,
         email: user.email,
-        name: user.full_name,
-        restaurantName: user.company_name,
-        restaurantId: user.restaurant_id,
-        needsSetup: !user.venue_setup_complete
+        full_name: user.full_name,           // ✅ NOT 'name'
+        restaurant_name: user.company_name,   // ✅ NOT 'restaurantName'
+        restaurant_id: user.restaurant_id,    // ✅ NOT 'restaurantId'
+        needsSetup: user.venue_setup_complete === false || user.venue_setup_complete === undefined
       }
     });
+
   } catch (error) {
-    console.error('Token verification error:', error);
+    console.error('❌ Token verification error:', error);
     res.status(500).json({
       success: false,
       message: 'Token verification failed'
     });
   }
 });
+
+console.log('✅ Auth endpoints loaded with correct field names');  }
+
 
 // Venue Setup
 app.post('/api/venue/setup', authenticateToken, async (req, res) => {
