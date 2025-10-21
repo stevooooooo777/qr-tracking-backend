@@ -2369,7 +2369,7 @@ app.post('/api/auth/verify', async (req, res) => {
   }
 });
 
-console.log('✅ Auth endpoints loaded with correct field names');  }
+console.log('✅ Auth endpoints loaded with correct field names');  
 
 
 // Venue Setup
