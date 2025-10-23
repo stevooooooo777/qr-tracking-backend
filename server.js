@@ -343,7 +343,20 @@ console.log('✅ Restaurants table initialized');
         FOREIGN KEY (restaurant_id) REFERENCES restaurants(restaurant_id) ON DELETE CASCADE
       )
     `);
+
 console.log('✅ Users table initialized');
+
+// Add missing columns if they don't exist
+await pool.query(`
+  ALTER TABLE users 
+  ADD COLUMN IF NOT EXISTS venue_setup_complete BOOLEAN DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS setup_data JSONB,
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()
+`);
+console.log('✅ User table columns verified');
+
+
+
 
 
  
