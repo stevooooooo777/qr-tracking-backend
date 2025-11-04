@@ -548,6 +548,25 @@ status VARCHAR(20) DEFAULT 'created' NOT NULL,
       )
     `);
 
+
+// ✅ NEW: Create card_configurations table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS card_configurations (
+        id SERIAL PRIMARY KEY,
+        restaurant_id VARCHAR(100) NOT NULL UNIQUE,
+        selected_cards JSONB NOT NULL DEFAULT '[]'::jsonb,
+        configurations JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (restaurant_id) REFERENCES restaurants(restaurant_id) ON DELETE CASCADE
+      )
+    `);
+    console.log('✅ Card configurations table initialized');
+
+
+
+
+
     // Create indexes for performance
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)
@@ -579,6 +598,10 @@ status VARCHAR(20) DEFAULT 'created' NOT NULL,
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_table_status_restaurant 
       ON table_status(restaurant_id, last_updated DESC)
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_card_configurations_restaurant 
+      ON card_configurations(restaurant_id)
     `);
 
     // Create notification tables
