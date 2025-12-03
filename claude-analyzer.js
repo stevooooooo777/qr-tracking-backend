@@ -1,5 +1,50 @@
+/*!
+ * ═══════════════════════════════════════════════════════════════
+ * insane.marketing - Luxury Hospitality Intelligence Platform
+ * ═══════════════════════════════════════════════════════════════
+ * 
+ * Copyright (c) 2024-2025 insane.marketing
+ * All Rights Reserved - Proprietary and Confidential
+
+ * 
+ * NOTICE: This code contains proprietary business logic and trade secrets.
+ * 
+ * Unauthorized use, reproduction, or distribution of this code,
+ * or any portion of it, may result in severe civil and criminal penalties,
+ * and will be prosecuted to the maximum extent possible under the law.
+
+ * 
+ * Key Protected Features:
+ * - Zero-Knowledge Architecture & Data Handling
+ * - Time Machine Transformation Visualization System
+ * - VIP Prediction & Recognition Engine
+ * - Service Recovery Intelligence System
+ * - Real-time Mission Control Analytics
+
+ * Protected by AI tracking - active
+ * For licensing inquiries: steve@insane.marketing
+
+ * ═══════════════════════════════════════════════════════════════
+ */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // claude-analyzer.js
-// AI-powered code analysis using Claude API
+// AI-powered code analysis API
 
 class ClaudeAnalyzer {
   constructor() {
