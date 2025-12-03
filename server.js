@@ -298,6 +298,13 @@ function detectLead(userMessage, botResponse) {
   return leadKeywords.some(keyword => messageText.includes(keyword));
 }
 
+
+// Sanitize user input
+function sanitizeInput(input) {
+  if (typeof input !== 'string') return '';
+  return input.trim().substring(0, 2000); // Max 2000 characters
+}
+
 console.log('DATABASE_URL configured:', !!process.env.DATABASE_URL);
 
 if (!process.env.DATABASE_URL) {
