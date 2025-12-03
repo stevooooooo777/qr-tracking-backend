@@ -72,7 +72,7 @@ app.set('trust proxy', 1);
 // Middleware - CORS first
 console.log('Setting up middleware...');
 app.use(cors({
-  origin: ['https://qr.insane.marketing', 'https://insane.marketing', 'http://localhost:3000'],
+  origin: ['https://qr.insane.marketing', 'https://insane.marketing', 'https://www.insane.marketing', 'http://localhost:3000'],
   methods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
